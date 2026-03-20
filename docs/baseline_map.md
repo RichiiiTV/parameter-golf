@@ -25,5 +25,5 @@
 
 ## Active Workflow
 - Active workflow is H100-only and manual-only.
-- `scripts/prepare_h100_run.py` is the active handoff generator.
+- The active SOTA path is the standalone record fork under `records/track_10min_16mb/2026-03-20_PreProjRMSNorm_Int5MLP_Bigram10240_SWA`.
 - A100 and GTX material are legacy history only and are not used for ranking in this reset phase.

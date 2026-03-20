@@ -2,7 +2,7 @@
 
 | Idea | Mechanism | Scope | Triton | Class | When |
 |---|---|---|---|---|---|
-| Official top-1 reproduction | Recreate `Muon WD + 10 layer` in the reset root trainer | H100-only | Irrelevant | GREEN | Now |
+| March 20 top-record reproduction | Recreate `10L Int5-MLP + BigramHash(10240) + SWA(frac=0.4) + WD=0.04` in a standalone record fork | H100-only | Irrelevant | GREEN | Now |
 | Sliding eval | Score each token once with richer left context | H100-only | Irrelevant | GREEN | Now |
 | `tok_emb.weight` fp16 retention | Preserve the tied embedding/output matrix in fp16 at export | H100-only | Irrelevant | GREEN | Now |
 | 10 layers | Increase unique depth within the accepted public stack | H100-only | Irrelevant | GREEN | Now |
@@ -23,6 +23,6 @@
 | Seed brute force | Spirit-violating search | Any | Irrelevant | RED | Never |
 
 Notes:
-- The official public top-1 is `Muon WD + 10 layer` at `1.17475315`.
-- The reset pass only promotes GREEN work into the active root path.
+- The March 20 record wave is now the operational frontier, led locally by `10L Int5-MLP + BigramHash(10240) + SWA(frac=0.4) + WD=0.04` at `1.14276`.
+- The active SOTA pass promotes GREEN work into standalone record folders, not into the root trainer.
 - YELLOW ideas stay documented and lane-scoped until the clean GREEN mainline exists.

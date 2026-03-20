@@ -1,50 +1,49 @@
 # Hopper Plan
 
 Current public best to beat:
-- `Muon WD + 10 layer` at `mean_val_bpb=1.17475315`
-- Record path: `records/track_10min_16mb/2026-03-19_SlidingWindow_FP16Emb_10L_MuonWD_OvertoneInit`
+- `10L Int5-MLP + BigramHash(10240) + SWA(frac=0.4) + WD=0.04` at `mean_val_bpb=1.14276`
+- Record path: `records/track_10min_16mb/2026-03-20_10L_Int5MLP_MuonWD04_SWA50`
 
 ## Active H100 Ladder
-- Run 1, GREEN mainline: `configs/h100/root_top1_repro.json`
-- Run 2, GREEN throughput: `configs/h100/root_top1_seq2048.json`
-- Run 3, GREEN throughput: `configs/h100/root_top1_seq4096.json`
-- Run 4, GREEN throughput follow-up: winner of Runs 2 and 3 plus CUDA Graph capture if it fits cleanly
-- Run 5, GREEN mechanism: winner plus pre-projection RMSNorm
-- Run 6, YELLOW architecture: winner plus recurrent/shared-width transformer blocks
-- Run 7, YELLOW compression: winner plus sparse high-precision outlier retention at export
+- Run 1: `records/track_10min_16mb/2026-03-20_PreProjRMSNorm_Int5MLP_Bigram10240_SWA` with `USE_PREPROJ_RMSNORM=0`
+- Run 2: the same folder with `USE_PREPROJ_RMSNORM=1`
+- Run 3: batch-token sweep on the winning mechanism setting
+- Run 4: three-seed promotion on the winning batch setting
+- Run 5: recurrent/shared-width only after the pre-proj fork is settled
+- Run 6: sparse outlier retention only after the pre-proj fork is settled
 
 ## Run 1
-- Goal: prove the reset trainer can express the official public top-1 stack cleanly.
-- Why it matters: this is the new root reference point; anything bolder should beat this stack, not the older sliding-only record.
-- Risks: reset drift, throughput regressions, export-byte regressions.
+- Goal: reproduce the current March 20 top record stack inside our own fork before enabling the new mechanism.
+- Why it matters: this is the true control for the contender.
+- Risks: fork drift, missing environment assumptions, or worse throughput than the parent record.
 
 RUN THIS MANUALLY ON H100
-- command: `py -3.11 scripts/prepare_h100_run.py configs/h100/root_top1_repro.json`
-- required environment: repo checkout, dataset cache, tokenizer cache, cluster path where `train_gpt.py` runs from repo root
+- command: from `records/track_10min_16mb/2026-03-20_PreProjRMSNorm_Int5MLP_Bigram10240_SWA`, run the baseline `sbatch --wrap` command from `README.md`
+- required environment: repo checkout, dataset cache, tokenizer cache, cluster path where the record folder can run in place
 - expected runtime budget: 10 minutes train, 10 minutes eval
-- success criteria: reproduce the public top-1 recipe in the reset root trainer and remain under `16,000,000` bytes
+- success criteria: match or nearly match the parent March 20 record behavior and remain under `16,000,000` bytes
 
 ## Run 2
-- Goal: test whether seq2048 improves the throughput-quality trade over the 1024-context top-1 recipe.
-- Why it matters: longer context is the cleanest H100-only throughput lever already supported by accepted records.
-- Risks: fewer optimizer steps inside the same wallclock, worse net quality despite richer context.
+- Goal: enable pre-projection RMSNorm on the same stack.
+- Why it matters: this is the first bold mechanism lane selected for our side.
+- Risks: added normalization cost could reduce throughput or hurt quality.
 
 RUN THIS MANUALLY ON H100
-- command: `py -3.11 scripts/prepare_h100_run.py configs/h100/root_top1_seq2048.json`
+- command: from `records/track_10min_16mb/2026-03-20_PreProjRMSNorm_Int5MLP_Bigram10240_SWA`, run the contender `sbatch --wrap` command from `README.md`
 - required environment: same as Run 1
 - expected runtime budget: 10 minutes train, 10 minutes eval
-- success criteria: beat or closely match Run 1 on post-export `val_bpb` while staying within the byte cap
+- success criteria: beat Run 1 on post-export `val_bpb` while staying within the byte cap
 
 ## Run 3
-- Goal: test whether seq4096 buys enough context value to offset the smaller token budget.
-- Why it matters: the official leaderboard already contains a strong seq4096 result, so this is the next clean throughput branch to test on top of the current top-1 recipe.
-- Risks: too few update steps, eval-time cost, weaker quality than seq2048.
+- Goal: sweep batch tokens on the better mechanism setting.
+- Why it matters: throughput is the cleanest next lever after mechanism choice.
+- Risks: higher batch tokens may reduce steps or trigger throughput regressions instead of helping.
 
 RUN THIS MANUALLY ON H100
-- command: `py -3.11 scripts/prepare_h100_run.py configs/h100/root_top1_seq4096.json`
+- command: use the three batch-sweep `sbatch --wrap` commands from the new record folder `README.md`
 - required environment: same as Run 1
 - expected runtime budget: 10 minutes train, 10 minutes eval
-- success criteria: beat Run 1 and Run 2 on post-export `val_bpb`, or remain close enough to justify the stronger context regime
+- success criteria: choose the best post-export `val_bpb` among `786432`, `917504`, and `1048576` without violating the byte cap
 
 ## Run 4
 - Goal: add CUDA Graph capture to the winning GREEN throughput lane if it can be done without bloating the root trainer.

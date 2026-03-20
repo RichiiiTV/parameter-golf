@@ -1,0 +1,10 @@
+{
+  "name": "PreProj RMSNorm + 10L Int5-MLP + BigramHash(10240) + SWA(frac=0.4) + WD=0.04",
+  "val_loss": null,
+  "bytes_total": null,
+  "blurb": "Planned contender built on the 2026-03-20 top record. Keeps mixed int5/int6 export, BigramHash(10240), SmearGate, WD=0.04, and SWA(frac=0.4), while adding learnable pre-projection RMSNorm before attention, MLP, and bigram projection linears. Update after real H100 runs.",
+  "author": "TBD",
+  "github_id": "TBD",
+  "date": "2026-03-20",
+  "status": "planned"
+}

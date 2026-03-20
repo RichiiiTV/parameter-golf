@@ -3,7 +3,7 @@
 
 # Current challenge interpretation
 - Source of truth is the official `README.md` plus accepted `records/`.
-- Current public bar is `records/track_10min_16mb/2026-03-19_SlidingWindow_FP16Emb_10L_MuonWD_OvertoneInit` at `mean_val_bpb=1.17475315`.
+- Current public bar is `records/track_10min_16mb/2026-03-20_10L_Int5MLP_MuonWD04_SWA50` at `mean_val_bpb=1.14276`.
 - Active work is H100-only, manual-only, and throughput-first.
 - Evaluation can be aggressive if it is reproducible, self-contained, under 10 minutes on 8xH100, and does not access external data or network.
 
@@ -26,7 +26,7 @@
 - Root `train_gpt.py` should look like the official upstream trainer plus narrow record-backed deltas.
 
 # GREEN / YELLOW / RED idea board
-- `GREEN`: official top-1 reproduction, sliding eval, fp16 tied-embedding export, 10 layers, Muon weight decay, overtone tied-embedding init, phase-transition `resid_mix`, seq2048 and seq4096 throughput lanes.
+- `GREEN`: mixed int5/int6 export, BigramHash, SmearGate, SWA, sliding eval, seq2048 throughput tuning, 10 layers, Muon/AdamW weight decay, zstd-22 fallback compression.
 - `YELLOW`: pre-projection RMSNorm, recurrent/shared-width transformers, sparse high-precision outlier retention, tokenizer changes, eval-time adaptation, custom Triton kernels.
 - `RED`: auto-launched H100 jobs, over-budget train/eval, network/data access during eval, oversized artifact, seed brute force.
 
@@ -64,45 +64,45 @@
 - `result.json`
 
 # Current hypotheses
-- The cleanest winning path is to first reproduce the official top-1 stack in the root trainer.
-- Throughput is the main lever after that reset, so H100 sequence-length scaling is the next GREEN branch.
-- `tok_emb.weight` fp16 retention remains the strongest export-side lever already supported by public evidence.
-- Pre-projection RMSNorm is the highest-priority bold mechanism to test after the GREEN mainline is stable.
+- The active SOTA path should live in a standalone record folder, not in root `train_gpt.py`.
+- The current March 20 top record is the right base for our fork.
+- Pre-projection RMSNorm is the first bold mechanism to test on top of that stack.
+- After mechanism selection, higher `TRAIN_BATCH_TOKENS` is the next throughput lever to sweep.
 
 # Current blockers
-- No H100 truth run has been executed from the reset trainer yet.
-- The active docs and registry must stay aligned with the H100-only workflow.
-- Bold YELLOW lanes should not be promoted until the GREEN mainline is represented cleanly.
+- No H100 truth run has been executed from the new record fork yet.
+- The active docs and registry still need to reflect the March 20 frontier and the new fork.
+- Bold YELLOW lanes should stay isolated inside record-style contenders, not root.
 
 # Current best candidates
-- `h100-root-top1-repro`
-- `h100-root-top1-seq2048`
-- `h100-root-top1-seq4096`
-- `h100-preproj-rmsnorm` as the first bold mechanism lane after the clean reproduction
+- `2026-03-20_10L_Int5MLP_MuonWD04_SWA50`
+- `2026-03-20_Int6_MLP3x_SmearGate_BigramHash_MuonWD_SWA`
+- `2026-03-20_PreProjRMSNorm_Int5MLP_Bigram10240_SWA`
 
 # Next 10 experiments
-- Run 1: `h100-root-top1-repro`
-- Run 2: `h100-root-top1-seq2048`
-- Run 3: `h100-root-top1-seq4096`
-- Run 4: winner of Runs 2 and 3 with CUDA Graph capture if it fits cleanly
-- Run 5: winner plus pre-projection RMSNorm
-- Run 6: winner plus recurrent/shared-width blocks
-- Run 7: winner plus sparse high-precision outlier retention at export
-- Run 8: winning GREEN lane with modest batch-token sweep
-- Run 9: winning GREEN lane with eval-length stress test
-- Run 10: final promoted H100 contender with full reproducibility package
+- Run 1: `USE_PREPROJ_RMSNORM=0` in `2026-03-20_PreProjRMSNorm_Int5MLP_Bigram10240_SWA`
+- Run 2: `USE_PREPROJ_RMSNORM=1` in `2026-03-20_PreProjRMSNorm_Int5MLP_Bigram10240_SWA`
+- Run 3: winner of Runs 1 and 2 at `TRAIN_BATCH_TOKENS=786432`
+- Run 4: winner at `TRAIN_BATCH_TOKENS=917504`
+- Run 5: winner at `TRAIN_BATCH_TOKENS=1048576`
+- Run 6: three-seed sweep at `SEED=42`
+- Run 7: three-seed sweep at `SEED=1337`
+- Run 8: three-seed sweep at `SEED=2024`
+- Run 9: recurrent/shared-width follow-up only if the pre-proj lane wins
+- Run 10: sparse outlier retention follow-up only if the pre-proj lane wins
 
 # Decision log
-- Reset the root trainer from the official upstream/public-record lineage instead of extending the local research core.
-- Retire GTX and A100 from the active workflow. They remain legacy history only.
-- Keep root `train_gpt.py` narrow: only upstream baseline plus public-record model/eval/export deltas.
-- Keep bold paper-backed ideas out of the root baseline until the clean H100 mainline is represented.
-- Keep Triton blocked until a winning GREEN lane exists and a standard-backend bottleneck is measured on H100.
+- Keep root `train_gpt.py` unchanged in the March 20 SOTA pass.
+- Build new SOTA attempts as standalone record folders under `records/track_10min_16mb`.
+- Treat the March 20 records as the operational frontier even if the root README is stale.
+- First bold mechanism on top of the March 20 winner is pre-projection RMSNorm.
+- Keep Triton blocked until a winning post-March-20 GREEN lane exists and a standard-backend bottleneck is measured on H100.
 
 # Rules for modifying code
 - Keep record-critical logic in `train_gpt.py`.
-- Prefer record-backed deltas in root and keep bold ideas explicit and isolated.
-- Do not add root flags unless they are needed to express a public-record delta or a clearly justified H100 lane.
+- Keep root changes minimal during SOTA work.
+- Prefer record-folder implementations for aggressive ideas.
+- Do not mutate root `train_gpt.py` in the March 20 record-fork pass.
 
 # Rules for adding dependencies
 - No new mandatory runtime dependencies in this reset pass.

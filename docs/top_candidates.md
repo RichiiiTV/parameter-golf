@@ -1,36 +1,36 @@
 # Top Candidates
 
 ## Current Public Best
-- `Muon WD + 10 layer`: `mean_val_bpb=1.17475315`, `artifact_bytes=15,374,243`
-- Record path: `records/track_10min_16mb/2026-03-19_SlidingWindow_FP16Emb_10L_MuonWD_OvertoneInit`
-- Interpretation: the active target is no longer sliding eval alone; it is the full top-1 stack.
+- `10L Int5-MLP + BigramHash(10240) + SWA(frac=0.4) + WD=0.04`: `mean_val_bpb=1.14276`, `artifact_bytes≈15.9M`
+- Record path: `records/track_10min_16mb/2026-03-20_10L_Int5MLP_MuonWD04_SWA50`
+- Runner-up: `records/track_10min_16mb/2026-03-20_Int6_MLP3x_SmearGate_BigramHash_MuonWD_SWA` at `1.1458`
+- Interpretation: the active frontier is now mixed int5/int6 export plus SmearGate/BigramHash/SWA, not the older March 19 top-1 stack.
 
 ## Active H100 Ladder
-- `h100-root-top1-repro`
-- `h100-root-top1-seq2048`
-- `h100-root-top1-seq4096`
-- `h100-preproj-rmsnorm`
-- `h100-recurrent-shared-width`
-- `h100-sparse-outlier-retention`
+- `2026-03-20_PreProjRMSNorm_Int5MLP_Bigram10240_SWA` with `USE_PREPROJ_RMSNORM=0`
+- `2026-03-20_PreProjRMSNorm_Int5MLP_Bigram10240_SWA` with `USE_PREPROJ_RMSNORM=1`
+- batch sweep on the winner at `786432`, `917504`, `1048576`
+- three-seed rerun on the winning setting
+- only then consider recurrent/shared-width or sparse outlier retention
 
 ## Top 10 Low-Hanging Fruits
-- Reproduce the official top-1 stack cleanly in the reset root trainer
+- Fork the March 20 top record instead of extending root `train_gpt.py`
+- Keep mixed int5/int6 export exactly as the parent record does it
+- Keep BigramHash at `10240`
+- Keep SmearGate and SWA unchanged on the first contender
+- Add only pre-projection RMSNorm as the first new mechanism
 - Keep sliding eval fixed at `stride=64`
-- Keep `tok_emb.weight` in fp16 at export
-- Keep 10 layers as the baseline public-best depth
-- Sweep sequence length through `1024`, `2048`, and `4096`
-- Keep the root trainer close to the upstream/public-record structure
+- Keep `VAL_LOSS_EVERY=0` by default in the contender
+- Sweep `TRAIN_BATCH_TOKENS` after mechanism selection
 - Compare candidates by post-export `val_bpb` first, not pre-export loss
-- Preserve byte headroom for later export-side ideas
-- Keep active workflow H100-only and manual-only
-- Keep Triton blocked until a winning GREEN lane exists
+- Keep Triton blocked until a winning post-March-20 lane exists
 
 ## Top 5 Hopper-Specific Experiments
-- `h100-root-top1-repro`
-- `h100-root-top1-seq2048`
-- `h100-root-top1-seq4096`
-- winning GREEN lane plus CUDA Graph capture
-- winning GREEN lane plus modest batch-token sweep
+- March 20 parent reproduction
+- pre-proj RMSNorm enabled on the same stack
+- `TRAIN_BATCH_TOKENS=786432`
+- `TRAIN_BATCH_TOKENS=917504`
+- `TRAIN_BATCH_TOKENS=1048576`
 
 ## Top 5 Triton Opportunities Or Reasons To Avoid Triton
 - Avoid custom attention kernels; SDPA is already vendor-tuned
@@ -47,9 +47,9 @@
 - eval-time auxiliary state or adaptation
 
 ## Top 3 Immediate Next Steps
-- Run the clean H100 top-1 reproduction
-- Run the seq2048 and seq4096 throughput branches
-- Promote the best GREEN lane before implementing any YELLOW branch
+- Run the new record fork with `USE_PREPROJ_RMSNORM=0`
+- Run the same fork with `USE_PREPROJ_RMSNORM=1`
+- Sweep batch tokens on whichever of those two wins
 
 ## Ranking Policy
 - Rank by lower post-export `val_bpb`
@@ -57,5 +57,5 @@
 - Break close ties by higher train tokens processed under the same 600-second budget
 
 ## Manual Interface
-- Use `py -3.11 scripts/prepare_h100_run.py <config>`
-- Submit the emitted `sbatch -c 6 --mem=20G --gres=gpu:8 -p batch_gpu -q 3h --wrap="..."` command on the H100 cluster
+- The active SOTA path is self-contained inside `records/track_10min_16mb/2026-03-20_PreProjRMSNorm_Int5MLP_Bigram10240_SWA`
+- Submit the exact `sbatch -c 6 --mem=20G --gres=gpu:8 -p batch_gpu -q 3h --wrap="..."` commands listed in that folder’s `README.md`
