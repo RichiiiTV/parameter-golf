@@ -2,12 +2,56 @@ from __future__ import annotations
 
 import argparse
 import json
+import shlex
 from itertools import product
 from pathlib import Path
 
 
-def format_env(env: dict[str, str]) -> str:
-    return "\n".join(f"{key}={value}" for key, value in sorted(env.items()))
+def slugify(value: str) -> str:
+    return "".join(ch.lower() if ch.isalnum() else "-" for ch in value).strip("-")
+
+
+def sbatch_parts(*, job_name: str, gpu_count: int, budget: int | float, slurm: dict[str, object]) -> list[str]:
+    parts = [
+        "sbatch",
+        f"-c {slurm.get('cpus_per_task', 6)}",
+        f"--mem={slurm.get('mem', '20G')}",
+        f"--gres={slurm.get('gres', f'gpu:{gpu_count}')}",
+        f"-p {slurm.get('partition', 'batch_gpu')}",
+        f"-q {slurm.get('qos', '3h')}",
+    ]
+    optional_map = {
+        "job_name": "-J",
+        "output": "-o",
+        "time": "-t",
+        "nodes": "-N",
+        "ntasks": "-n",
+        "account": "-A",
+        "constraint": "-C",
+        "nodelist": "-w",
+        "exclude": "-x",
+    }
+    for key, flag in optional_map.items():
+        value = slurm.get(key)
+        if value:
+            parts.append(f"{flag} {value}")
+    extra_args = slurm.get("extra_args", [])
+    if isinstance(extra_args, str):
+        parts.append(extra_args)
+    else:
+        parts.extend(str(arg) for arg in extra_args)
+    return parts
+
+
+def wrap_command(*, env: dict[str, str], nproc_per_node: int, run_id: str) -> str:
+    env_items = [f"RUN_ID={shlex.quote(run_id)}"]
+    env_items.extend(f"{key}={shlex.quote(value)}" for key, value in sorted(env.items()) if key != "RUN_ID")
+    return " ".join(env_items + [f"torchrun --standalone --nproc_per_node={nproc_per_node} train_gpt.py"])
+
+
+def wrap_arg(command: str) -> str:
+    escaped = command.replace("\\", "\\\\").replace('"', '\\"')
+    return f'--wrap="{escaped}"'
 
 
 def emit_block(
@@ -20,17 +64,24 @@ def emit_block(
     success: str,
     risks: str,
     point_name: str | None = None,
+    slurm: dict[str, object] | None = None,
 ) -> None:
+    slurm = slurm or {}
+    point_slug = slugify(point_name or config_path.stem)[:80]
+    job_name = slugify(str(slurm.get("job_name", point_slug)))[:80] or "parameter-golf-h100"
+    run_id = slugify(str(slurm.get("run_id", job_name)))[:100] or "parameter-golf-h100"
+    wrap = wrap_command(env=env, nproc_per_node=8, run_id=run_id)
+    command = " ".join(sbatch_parts(job_name=job_name, gpu_count=8, budget=budget, slurm=slurm) + [wrap_arg(wrap)])
+
     print("RUN THIS MANUALLY ON H100")
     print(f"config: {config_path.relative_to(root)}")
     if point_name:
         print(f"matrix_point: {point_name}")
     print(f"purpose: {purpose}")
     print(f"runtime_budget_minutes: {budget}")
-    print("environment:")
-    print(format_env(env) or "(none)")
-    print("command: torchrun --standalone --nproc_per_node=8 train_gpt.py")
-    print("expected_outputs: logs/<RUN_ID>.txt, final_model.int8.ptz, final roundtrip metrics")
+    print("command:")
+    print(command)
+    print("expected_outputs: slurm-%x-%j.out, logs/<RUN_ID>.txt, final_model.int8.ptz, final roundtrip metrics")
     print(f"risks: {risks}")
     print(f"success_criteria: {success}")
     print()
@@ -44,13 +95,9 @@ def emit_single(root: Path, config_path: Path, config: dict[str, object]) -> Non
         purpose=str(config.get("purpose", config.get("profile", config_path.stem))),
         budget=config.get("runtime_budget_minutes", 10),
         env=env,
-        success=str(
-            config.get(
-                "success_criteria",
-                "Improve post-export val_bpb without breaking the 16,000,000-byte cap.",
-            )
-        ),
+        success=str(config.get("success_criteria", "Improve post-export val_bpb without breaking the 16,000,000-byte cap.")),
         risks=str(config.get("risks", "Compile overhead, eval-time budget, and artifact-byte regressions.")),
+        slurm=dict(config.get("slurm", {})),
     )
 
 
@@ -61,17 +108,12 @@ def emit_matrix(root: Path, config_path: Path, config: dict[str, object]) -> Non
     if not keys:
         emit_single(root, config_path, config)
         return
-    values_product = product(*(matrix[key] for key in keys))
     purpose = str(config.get("purpose", config.get("profile", config_path.stem)))
     budget = config.get("runtime_budget_minutes", 10)
-    success = str(
-        config.get(
-            "success_criteria",
-            "Improve post-export val_bpb without breaking the 16,000,000-byte cap.",
-        )
-    )
+    success = str(config.get("success_criteria", "Improve post-export val_bpb without breaking the 16,000,000-byte cap."))
     risks = str(config.get("risks", "Compile overhead, eval-time budget, and artifact-byte regressions."))
-    for combo in values_product:
+    slurm = dict(config.get("slurm", {}))
+    for combo in product(*(matrix[key] for key in keys)):
         point_env = dict(base_env)
         point_name = []
         for key, value in zip(keys, combo):
@@ -86,17 +128,20 @@ def emit_matrix(root: Path, config_path: Path, config: dict[str, object]) -> Non
             success=success,
             risks=risks,
             point_name=", ".join(point_name),
+            slurm=slurm,
         )
 
 
 def main() -> None:
-    parser = argparse.ArgumentParser(description="Emit manual-only H100 handoff blocks")
+    parser = argparse.ArgumentParser(description="Emit manual-only H100 sbatch --wrap commands")
     parser.add_argument("config", help="Path to H100 JSON config")
     args = parser.parse_args()
 
     root = Path(__file__).resolve().parents[1]
     config_path = (root / args.config).resolve() if not Path(args.config).is_absolute() else Path(args.config)
     config = json.loads(config_path.read_text(encoding="utf-8"))
+    if not bool(config.get("h100_only", False)):
+        raise SystemExit(f"Refusing non-H100 config: {config_path}")
     if "matrix" in config:
         emit_matrix(root, config_path, config)
     else:

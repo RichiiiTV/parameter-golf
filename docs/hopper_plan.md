@@ -1,105 +1,91 @@
 # Hopper Plan
 
 Current public best to beat:
-- `Sliding Window + FP16 Embed + 10L + Muon WD + Overtone Init` at `mean_val_bpb=1.17475315`
+- `Muon WD + 10 layer` at `mean_val_bpb=1.17475315`
+- Record path: `records/track_10min_16mb/2026-03-19_SlidingWindow_FP16Emb_10L_MuonWD_OvertoneInit`
 
-## 4xA100 Promotion Gate
-- Lane A single-point proxy baseline: `configs/a100/seq2048_fp16embed_slide64_control.json`
-- Lane B single-point proxy baseline: `configs/a100/10l_muonwd_overtone_slide64_primary.json`
-- Lane A proxy sweep: `configs/a100/lane_a_proxy_matrix.json`
-- Lane B proxy sweep: `configs/a100/lane_b_proxy_matrix.json`
-- Lane A full rerun surface: `configs/a100/lane_a_full_matrix.json`
-- Lane B full rerun surface: `configs/a100/lane_b_full_matrix.json`
-- Rule: run the four `TRAIN_BATCH_TOKENS=524288` proxy points first, keep only the better compile mode per lane, then sweep higher batch sizes, then rerun one full sliding finalist per lane.
+## Active H100 Ladder
+- Run 1, GREEN mainline: `configs/h100/root_top1_repro.json`
+- Run 2, GREEN throughput: `configs/h100/root_top1_seq2048.json`
+- Run 3, GREEN throughput: `configs/h100/root_top1_seq4096.json`
+- Run 4, GREEN throughput follow-up: winner of Runs 2 and 3 plus CUDA Graph capture if it fits cleanly
+- Run 5, GREEN mechanism: winner plus pre-projection RMSNorm
+- Run 6, YELLOW architecture: winner plus recurrent/shared-width transformer blocks
+- Run 7, YELLOW compression: winner plus sparse high-precision outlier retention at export
 
-RUN THIS MANUALLY ON 4xA100
-- command: `py -3.11 scripts/prepare_a100_run.py configs/a100/lane_a_proxy_matrix.json`
-- command: `py -3.11 scripts/prepare_a100_run.py configs/a100/lane_b_proxy_matrix.json`
-- command: `py -3.11 scripts/prepare_a100_run.py configs/a100/lane_a_full_matrix.json`
-- command: `py -3.11 scripts/prepare_a100_run.py configs/a100/lane_b_full_matrix.json`
-- expected outputs: printed 4xA100 command blocks for proxy and full sliding runs
-- success criteria: identify one full-eval finalist per lane before any H100 run
-
-## H100 Candidate Selection
-- No H100 candidate is final until the A100 throughput pass finishes.
-- If Lane A and Lane B are within `0.003 bpb` on full sliding eval, prefer the faster lane with higher `train_tokens_seen`.
-- If Lane B wins clearly, use `configs/h100/10l_muonwd_overtone_slide64.json`.
-- If Lane A wins or is within the tie band and faster, use `configs/h100/seq2048_fp16embed_slide64.json`.
-
-## Provisional H100 Lane B Candidate
-- Use only if Lane B wins the A100 throughput pass.
+## Run 1
+- Goal: prove the reset trainer can express the official public top-1 stack cleanly.
+- Why it matters: this is the new root reference point; anything bolder should beat this stack, not the older sliding-only record.
+- Risks: reset drift, throughput regressions, export-byte regressions.
 
 RUN THIS MANUALLY ON H100
-- config: `configs/h100/10l_muonwd_overtone_slide64.json`
-- environment:
-  - `ADAMW_WEIGHT_DECAY=0.01`
-  - `COMPILE_MODE=fullgraph`
-  - `COMPUTE_DTYPE=auto`
-  - `EVAL_BATCH_SEQS=1024`
-  - `EVAL_MODE=sliding`
-  - `EVAL_SEQ_LEN=1024`
-  - `EVAL_STRIDE=64`
-  - `KEEP_FLOAT_EXTRA=tok_emb.weight`
-  - `MATRIX_LR=0.04`
-  - `MAX_WALLCLOCK_SECONDS=600`
-  - `MLP_HIDDEN=0`
-  - `MUON_WEIGHT_DECAY=0.02`
-  - `NUM_LAYERS=10`
-  - `RESID_MIX_INIT=phase_transition`
-  - `SCALAR_LR=0.04`
-  - `SDPA_BACKEND=auto`
-  - `TIED_EMBED_INIT_MODE=overtone`
-  - `TIED_EMBED_LR=0.10`
-  - `TRAIN_BATCH_TOKENS=524288`
-  - `TRAIN_LOG_EVERY=50`
-  - `TRAIN_SEQ_LEN=1024`
-  - `VAL_LOSS_EVERY=1000`
-  - `WARMDOWN_ITERS=2500`
-- command: `torchrun --standalone --nproc_per_node=8 train_gpt.py`
-- runtime budget: 10 minutes train, 10 minutes eval
-- expected outputs: `logs/<RUN_ID>.txt`, `final_model.int8.ptz`, final roundtrip metrics
-- risks: the root-trainer port may still underperform the record implementation, or the A100 win may not transfer cleanly to H100
-- success criteria: run this only if Lane B wins the A100 throughput pass, then target the current public bar near `1.1748` without exceeding `16,000,000` bytes
+- command: `py -3.11 scripts/prepare_h100_run.py configs/h100/root_top1_repro.json`
+- required environment: repo checkout, dataset cache, tokenizer cache, cluster path where `train_gpt.py` runs from repo root
+- expected runtime budget: 10 minutes train, 10 minutes eval
+- success criteria: reproduce the public top-1 recipe in the reset root trainer and remain under `16,000,000` bytes
 
-## Provisional H100 Lane A Candidate
-- Use only if Lane A wins the A100 throughput pass, or if Lane B is within the tie band but slower.
+## Run 2
+- Goal: test whether seq2048 improves the throughput-quality trade over the 1024-context top-1 recipe.
+- Why it matters: longer context is the cleanest H100-only throughput lever already supported by accepted records.
+- Risks: fewer optimizer steps inside the same wallclock, worse net quality despite richer context.
 
 RUN THIS MANUALLY ON H100
-- config: `configs/h100/seq2048_fp16embed_slide64.json`
-- environment:
-  - `COMPILE_MODE=fullgraph`
-  - `COMPUTE_DTYPE=auto`
-  - `EVAL_BATCH_SEQS=1024`
-  - `EVAL_MODE=sliding`
-  - `EVAL_SEQ_LEN=2048`
-  - `EVAL_STRIDE=64`
-  - `KEEP_FLOAT_EXTRA=tok_emb.weight`
-  - `MATRIX_LR=0.032`
-  - `MAX_WALLCLOCK_SECONDS=600`
-  - `MLP_HIDDEN=992`
-  - `SCALAR_LR=0.032`
-  - `SDPA_BACKEND=auto`
-  - `TIED_EMBED_LR=0.04`
-  - `TRAIN_BATCH_TOKENS=524288`
-  - `TRAIN_LOG_EVERY=50`
-  - `TRAIN_SEQ_LEN=2048`
-  - `VAL_LOSS_EVERY=1000`
-  - `WARMDOWN_ITERS=3600`
-- command: `torchrun --standalone --nproc_per_node=8 train_gpt.py`
-- runtime budget: 10 minutes train, 10 minutes eval
-- expected outputs: `logs/<RUN_ID>.txt`, `final_model.int8.ptz`, final roundtrip metrics
-- risks: Lane A may simply have a lower ceiling even if it is faster
-- success criteria: run this only if Lane A wins the A100 throughput pass, or as the chosen winner under the tie-band rule
+- command: `py -3.11 scripts/prepare_h100_run.py configs/h100/root_top1_seq2048.json`
+- required environment: same as Run 1
+- expected runtime budget: 10 minutes train, 10 minutes eval
+- success criteria: beat or closely match Run 1 on post-export `val_bpb` while staying within the byte cap
 
-## Systems Follow-Up
-- Benchmark `SDPA_BACKEND x COMPILE_MODE` only after the winning lane is identified.
-- First emit the per-point manual handoff blocks locally, then execute the printed `torchrun` blocks one by one on H100.
+## Run 3
+- Goal: test whether seq4096 buys enough context value to offset the smaller token budget.
+- Why it matters: the official leaderboard already contains a strong seq4096 result, so this is the next clean throughput branch to test on top of the current top-1 recipe.
+- Risks: too few update steps, eval-time cost, weaker quality than seq2048.
 
 RUN THIS MANUALLY ON H100
-- config: `configs/h100/systems_sdpa_compile_matrix.json`
-- environment: use the matrix points encoded in the config plus the winning lane env
-- command: `py -3.11 scripts/prepare_h100_run.py configs/h100/systems_sdpa_compile_matrix.json`
-- runtime budget: 10 minutes per matrix point
-- expected outputs: emitted manual blocks for each matrix point, then per-point throughput and final roundtrip metrics once those blocks are executed by a human
-- risks: compile overhead hiding steady-state gains, backend-specific regressions
-- success criteria: identify the best backend/compile combination for the winning lane
+- command: `py -3.11 scripts/prepare_h100_run.py configs/h100/root_top1_seq4096.json`
+- required environment: same as Run 1
+- expected runtime budget: 10 minutes train, 10 minutes eval
+- success criteria: beat Run 1 and Run 2 on post-export `val_bpb`, or remain close enough to justify the stronger context regime
+
+## Run 4
+- Goal: add CUDA Graph capture to the winning GREEN throughput lane if it can be done without bloating the root trainer.
+- Why it matters: if launch overhead is still material on 8xH100, graphs are the highest-value systems lever still consistent with a throughput-first strategy.
+- Risks: code complexity, graph-break fragility, reduced reproducibility.
+
+RUN THIS MANUALLY ON H100
+- command: prepare a dedicated config only after one of Runs 2 or 3 wins cleanly
+- required environment: same as Run 1
+- expected runtime budget: 10 minutes train, 10 minutes eval
+- success criteria: higher train tokens processed than the parent GREEN lane with no score regression
+
+## Run 5
+- Goal: test extra RMSNorm before projections as the first bold mechanism lane.
+- Why it matters: the research garden currently highlights this as the highest-priority mechanism question.
+- Risks: added normalization cost may erase any quality gain.
+
+RUN THIS MANUALLY ON H100
+- command: prepare a dedicated config only after the winning GREEN lane is stable
+- required environment: same as Run 1
+- expected runtime budget: 10 minutes train, 10 minutes eval
+- success criteria: clear post-export win over the best GREEN lane with stable artifact size and reproducibility
+
+## Run 6
+- Goal: test recurrent/shared-width capacity reallocation against the 16 MB limit.
+- Why it matters: aggressive parameter sharing is the clearest route to buying width without exceeding the artifact cap.
+- Risks: compliance ambiguity, implementation risk, and lower throughput despite parameter savings.
+
+RUN THIS MANUALLY ON H100
+- command: prepare a dedicated config only after the winning GREEN lane is stable
+- required environment: same as Run 1
+- expected runtime budget: 10 minutes train, 10 minutes eval
+- success criteria: clear win over the best GREEN lane and explicit compliance review before promotion
+
+## Run 7
+- Goal: convert artifact headroom into quality via sparse or decoupled high-precision outlier retention.
+- Why it matters: this is the strongest compression-side bold idea currently surfaced by the research garden.
+- Risks: packing complexity, portability risk, and weak byte-efficiency relative to simple fp16 retention.
+
+RUN THIS MANUALLY ON H100
+- command: prepare a dedicated config only after the winning GREEN lane is stable
+- required environment: same as Run 1
+- expected runtime budget: 10 minutes train, 10 minutes eval
+- success criteria: better post-export `val_bpb` than the best GREEN lane without breaking artifact accounting or reproducibility

@@ -1,31 +1,12 @@
 # Autosearch Plan
 
-Policy:
-- Config-only and allowlisted.
-- No code mutation.
-- No seed search.
-- No H100 execution.
+Status:
+- Deferred in the H100-only reset pass.
 
-Lanes:
-- `train_lane`
-- `export_lane`
-- `eval_lane`
-- `h100_lane` as manual queue only
+Reason:
+- The active workflow is manual-only on H100, and the next task is a clean reproduction of the public top-1 stack rather than broader automated search.
 
-Allowlisted knobs:
-- `TRAIN_SEQ_LEN`
-- `TIED_EMBED_LR`
-- `MATRIX_LR`
-- `SCALAR_LR`
-- `WARMDOWN_ITERS`
-- `MLP_HIDDEN`
-- `KEEP_FLOAT_EXTRA`
-- `EVAL_MODE`
-- `EVAL_STRIDE`
-- `EVAL_SEQ_LEN`
-- `INT8_CLIP_PERCENTILE`
-
-Objective:
-- lowest proxy post-roundtrip `val_bpb`
-- then smallest artifact
-- then lowest eval time
+Revisit only after:
+- one GREEN H100 lane is reproduced cleanly
+- the active manual ladder is stable
+- the ranking objective is narrowed enough to justify automated exploration
