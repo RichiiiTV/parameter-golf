@@ -6,58 +6,54 @@
 - Interpretation: the public frontier now combines clean sliding eval, fp16 tied-embedding export, 10 layers, decoupled Muon weight decay, overtone tied-embedding init, and phase-transition `resid_mix` init
 
 ## Root Candidate Ladder
-- Legacy control: `seq2048 + fp16 tok_emb export + sliding eval stride 64`
-- Primary root challenger: `10L + Muon WD + overtone init + phase-transition resid_mix + sliding eval stride 64 + fp16 tok_emb export`
-- Fallback root challenger: `10L + Muon WD + low LR + long warmdown + sliding eval stride 64 + fp16 tok_emb export`
+- Lane A control: `seq2048 + fp16 tok_emb export + sliding eval stride 64`
+- Lane B primary: `10L + Muon WD + overtone init + phase-transition resid_mix + sliding eval stride 64 + fp16 tok_emb export`
+- Throughput-first rule: do not add fallback model branches, EMA, seq4096, or export codec changes until Lane A vs Lane B is decided on A100
 
-## Primary Root Challenger
-- `NUM_LAYERS=10`
-- `TRAIN_SEQ_LEN=1024`
-- `TIED_EMBED_LR=0.10`
-- `MATRIX_LR=0.04`
-- `SCALAR_LR=0.04`
-- `WARMDOWN_ITERS=2500`
-- `MUON_WEIGHT_DECAY=0.02`
-- `ADAMW_WEIGHT_DECAY=0.01`
-- `TIED_EMBED_INIT_MODE=overtone`
-- `RESID_MIX_INIT=phase_transition`
-- `KEEP_FLOAT_EXTRA=tok_emb.weight`
-- `EVAL_MODE=sliding`
-- `EVAL_SEQ_LEN=1024`
-- `EVAL_STRIDE=64`
-- `MLP_HIDDEN=0`
+## Throughput Pass
+- `Lane A`: keep the legacy seq2048 control fixed except for `COMPILE_MODE`, `TRAIN_BATCH_TOKENS`, and proxy vs full eval scope
+- `Lane B`: keep the current 10-layer root port fixed except for `COMPILE_MODE`, `TRAIN_BATCH_TOKENS`, and proxy vs full eval scope
+- Rank proxy runs by:
+  1. lower `post-export val_bpb`
+  2. higher `train_tokens_seen`
+  3. lower `pre_post_gap`
 
 ## 4xA100 Preflight Order
-- Control: `configs/a100/seq2048_fp16embed_slide64_control.json`
-- Primary: `configs/a100/10l_muonwd_overtone_slide64_primary.json`
-- Fallback: `configs/a100/10l_muonwd_lowlr_slide64_fallback.json`
-- Promotion rule: only send the 10-layer path to H100 if it clearly beats the control on post-export `val_bpb` at the same 600-second budget
+- First pass:
+  - `configs/a100/seq2048_fp16embed_slide64_control.json`
+  - `configs/a100/10l_muonwd_overtone_slide64_primary.json`
+  - `configs/a100/lane_a_proxy_matrix.json`
+  - `configs/a100/lane_b_proxy_matrix.json`
+- Finalist pass:
+  - `configs/a100/lane_a_full_matrix.json`
+  - `configs/a100/lane_b_full_matrix.json`
+- Promotion rule: only send the winning lane to H100 after one full sliding rerun per lane finalist
 
 ## Top 10 Low-Hanging Fruits
-- Port the top-1 10-layer stack into the root trainer without adding challenge-edge features
+- Use proxy-only end-of-run eval on A100 preflights
+- Keep `VAL_LOSS_EVERY=0` on A100 preflights
+- Sweep `COMPILE_MODE=off|fullgraph` only
+- Sweep `TRAIN_BATCH_TOKENS=524288|786432|1048576`
+- Keep `SDPA_BACKEND=auto` fixed on A100
 - Keep `tok_emb.weight` in fp16 at export
-- Use clean sliding eval with `stride=64`
-- Add decoupled Muon weight decay only to matrix params
-- Add AdamW decay only to token/scalar groups
-- Use overtone tied-embedding init in the tied-weight path
-- Use phase-transition `resid_mix` init across blocks
-- Keep the low-LR, long-warmdown 10-layer fallback ready if the primary overfits or quantizes poorly
-- Benchmark `SDPA_BACKEND x COMPILE_MODE` only after the winning 10-layer candidate is identified
-- Keep Triton out until a standard-backend loss is measured on H100
+- Keep sliding eval fixed at `stride=64`
+- Log `script_path`, `trainer_sha256`, `val_scope`, `val_max_seqs`, `train_tokens_seen`, and `ms_per_step`
+- Use full sliding reruns only for lane finalists
+- Keep Triton and new model ideas out until the throughput pass finishes
 
 ## Top 5 Hopper-Specific Experiments
-- Primary H100 run: `configs/h100/10l_muonwd_overtone_slide64.json`
-- Fallback H100 run: `configs/h100/10l_muonwd_lowlr_slide64.json`
-- Legacy control H100 run: `configs/h100/seq2048_fp16embed_slide64.json`
+- Winning Lane A or Lane B config promoted from full A100 eval
+- Legacy seq2048 control on H100 only if Lane A wins
+- 10-layer root port on H100 only if Lane B wins
 - Post-winner `SDPA_BACKEND x COMPILE_MODE` matrix
-- EMA only after the 10-layer path has a truth result
+- No EMA or extra model branches until a winning lane is identified
 
 ## Top 5 Triton Opportunities Or Reasons To Avoid Triton
 - Avoid custom attention kernels
 - Avoid custom GEMM
 - Prefer standard SDPA/cuDNN/Inductor first
 - Consider export packing only after profiling
-- Keep Triton blocked until the 10-layer path has H100 truth data
+- Keep Triton blocked until the throughput pass identifies a winning lane
 
 ## Top 5 Risky But Interesting Challenge-Edge Ideas
 - LoRA TTT
@@ -67,9 +63,14 @@
 - Tokenizer changes
 
 ## Top 3 Immediate Next Steps
-- Run the 4xA100 control and primary challenger back-to-back
-- Run the 4xA100 fallback only if the primary recipe is unstable or loses too much post-export quality
-- Promote only the winning 10-layer path to H100 manual truth runs
+- Run the four A100 proxy baselines first at `TRAIN_BATCH_TOKENS=524288`
+- Sweep higher batch sizes only on the better compile mode within each lane
+- Rerun one full sliding finalist per lane before deciding the H100 candidate
+
+## Latest A100 Findings
+- Lane A control on 4xA100: `post-export val_bpb=1.34368971`, `train_tokens_seen=644,874,240`, `step_stop=1230`
+- Lane B primary on 4xA100: `post-export val_bpb=1.34109285`, `train_tokens_seen=540,540,928`, `step_stop=1031`
+- Interpretation: Lane B only barely beat Lane A while processing materially fewer tokens, so throughput recovery is the right next move
 
 ## Local Proxy Notes
 - `gtx1080ti-smoke`: `pre/post val_bpb = 3.94218527 / 3.95601011`, `bytes_total=5,050,048`

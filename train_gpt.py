@@ -2,6 +2,7 @@
 from __future__ import annotations
 import copy
 import glob
+import hashlib
 import io
 import json
 import math
@@ -850,6 +851,9 @@ class GPT(nn.Module):
 def main() -> None:
     global zeropower_via_newtonschulz5
     code = Path(__file__).read_text(encoding="utf-8")
+    code_bytes = code.encode("utf-8")
+    trainer_sha256 = hashlib.sha256(code_bytes).hexdigest()
+    script_path = Path(__file__).name
     args = Hyperparameters()
     distributed = "RANK" in os.environ and "WORLD_SIZE" in os.environ
     rank = int(os.environ.get("RANK", "0"))
@@ -903,6 +907,7 @@ def main() -> None:
     log0(f"Running PyTorch {torch.__version__}", console=False)
     git_info = git_metadata()
     log0(f"git_commit:{git_info['commit']} git_dirty:{git_info['dirty']}", console=False)
+    log0(f"script_path:{script_path} trainer_sha256:{trainer_sha256}", console=False)
     log0(subprocess.run(["nvidia-smi"], stdout=subprocess.PIPE, stderr=subprocess.PIPE, text=True, check=False).stdout, console=False)
     log0(f"resolved_runtime:{json.dumps({'compute_dtype': str(compute_dtype).removeprefix('torch.'), 'muon_dtype': str(muon_dtype).removeprefix('torch.'), 'sdpa_backend': sdpa_backend, 'compile_mode': compile_mode, 'use_fused_adam': use_fused_adam, 'grad_accum_steps': grad_accum_steps, 'device_name': torch.cuda.get_device_name(device)}, sort_keys=True)}", console=False)
     log0(f"resolved_hparams:{json.dumps(hyperparameters_dict(args), sort_keys=True)}", console=False)
@@ -921,10 +926,12 @@ def main() -> None:
         raise ValueError("EVAL_STRIDE must be positive when EVAL_MODE=sliding")
     val_tokens = load_validation_tokens(args.val_files, args.eval_seq_len, max_seqs=args.val_max_seqs, require_full_sequences=require_full_eval_sequences)
     base_bytes_lut, has_leading_space_lut, is_boundary_token_lut = build_sentencepiece_luts(sp, args.vocab_size, device)
+    val_scope = "proxy" if args.val_max_seqs > 0 else "full"
     log0(f"val_bpb:enabled tokenizer_kind=sentencepiece tokenizer_path={args.tokenizer_path}")
     log0(f"train_loader:dataset:{dataset_name} train_shards:{actual_train_files} expected_train_shards:{expected_train_files if expected_train_files is not None else 'unknown'}")
     log0(f"val_loader:shards pattern={args.val_files} tokens:{val_tokens.numel() - 1}")
     log0(f"eval_mode:{args.eval_mode} eval_seq_len:{args.eval_seq_len} eval_stride:{args.eval_stride} eval_batch_seqs:{args.eval_batch_seqs if args.eval_batch_seqs > 0 else 'auto'} val_max_seqs:{args.val_max_seqs}")
+    log0(f"val_scope:{val_scope} val_max_seqs:{args.val_max_seqs}")
     base_model = GPT(vocab_size=args.vocab_size, num_layers=args.num_layers, model_dim=args.model_dim, num_heads=args.num_heads, num_kv_heads=args.num_kv_heads, mlp_mult=args.mlp_mult, mlp_hidden=args.mlp_hidden, tie_embeddings=args.tie_embeddings, tied_embed_init_std=args.tied_embed_init_std, tied_embed_init_mode=args.tied_embed_init_mode, tied_embed_overtone_power=args.tied_embed_overtone_power, logit_softcap=args.logit_softcap, rope_base=args.rope_base, qk_gain_init=args.qk_gain_init, use_activation_checkpointing=args.use_activation_checkpointing, resid_mix_init=args.resid_mix_init, resid_mix_phase_gain=args.resid_mix_phase_gain).to(device=device, dtype=compute_dtype)
     for module in base_model.modules():
         if isinstance(module, CastedLinear):
@@ -1127,7 +1134,10 @@ def main() -> None:
         if stop_after_step is None and reached_cap:
             stop_after_step = step
     log0(f"peak memory allocated: {torch.cuda.max_memory_allocated() // 1024 // 1024} MiB reserved: {torch.cuda.max_memory_reserved() // 1024 // 1024} MiB")
-    log0(f"train_tokens_seen:{step * args.train_batch_tokens}")
+    train_tokens_seen = step * args.train_batch_tokens
+    ms_per_step = round(training_time_ms / max(step, 1), 2)
+    log0(f"train_tokens_seen:{train_tokens_seen}")
+    log0(f"train_summary:{json.dumps({'train_tokens_seen': train_tokens_seen, 'ms_per_step': ms_per_step, 'step_stop': step}, sort_keys=True)}")
     ema_backup = swap_in_ema()
     export_source = "ema" if ema_backup is not None else "live"
     log0(f"export_source_model:{export_source}")
@@ -1136,10 +1146,9 @@ def main() -> None:
     if master_process and not args.skip_raw_export:
         torch.save(base_model.state_dict(), "final_model.pt")
         model_bytes = os.path.getsize("final_model.pt")
-        code_bytes = len(code.encode("utf-8"))
         log0(f"Serialized model: {model_bytes} bytes")
-        log0(f"Code size: {code_bytes} bytes")
-        log0(f"Total submission size: {model_bytes + code_bytes} bytes")
+        log0(f"Code size: {len(code_bytes)} bytes")
+        log0(f"Total submission size: {model_bytes + len(code_bytes)} bytes")
     elif master_process:
         log0("Serialized model: skipped raw checkpoint via SKIP_RAW_EXPORT=1")
     quant_obj, quant_stats = quantize_state_dict_int8(base_model.state_dict())
@@ -1152,10 +1161,9 @@ def main() -> None:
         with open("final_model.int8.ptz", "wb") as f:
             f.write(quant_blob)
         quant_file_bytes = os.path.getsize("final_model.int8.ptz")
-        code_bytes = len(code.encode("utf-8"))
         ratio = quant_stats["baseline_tensor_bytes"] / max(quant_stats["int8_payload_bytes"], 1)
         log0(f"Serialized model int8+zlib: {quant_file_bytes} bytes (payload:{quant_stats['int8_payload_bytes']} raw_torch:{quant_raw_bytes} payload_ratio:{ratio:.2f}x)")
-        log0(f"Total submission size int8+zlib: {quant_file_bytes + code_bytes} bytes")
+        log0(f"Total submission size int8+zlib: {quant_file_bytes + len(code_bytes)} bytes")
     if distributed:
         dist.barrier()
     with open("final_model.int8.ptz", "rb") as f:
@@ -1168,7 +1176,7 @@ def main() -> None:
     torch.cuda.synchronize()
     log0(f"final_int8_zlib_roundtrip val_loss:{q_val_loss:.4f} val_bpb:{q_val_bpb:.4f} eval_time:{1000.0 * (time.perf_counter() - t_qeval):.0f}ms")
     log0(f"final_int8_zlib_roundtrip_exact val_loss:{q_val_loss:.8f} val_bpb:{q_val_bpb:.8f}")
-    final_metric_summary = {"pre_val_loss": round(pre_val_loss, 8), "pre_val_bpb": round(pre_val_bpb, 8), "post_val_loss": round(q_val_loss, 8), "post_val_bpb": round(q_val_bpb, 8), "pre_post_gap": round(q_val_bpb - pre_val_bpb, 8), "artifact_bytes_total": (quant_file_bytes + len(code.encode("utf-8"))) if master_process else None, "eval_mode": args.eval_mode, "eval_seq_len": args.eval_seq_len, "eval_stride": args.eval_stride, "export_source_model": export_source}
+    final_metric_summary = {"artifact_bytes_total": (quant_file_bytes + len(code_bytes)) if master_process else None, "eval_mode": args.eval_mode, "eval_seq_len": args.eval_seq_len, "eval_stride": args.eval_stride, "export_source_model": export_source, "ms_per_step": ms_per_step, "post_val_bpb": round(q_val_bpb, 8), "post_val_loss": round(q_val_loss, 8), "pre_post_gap": round(q_val_bpb - pre_val_bpb, 8), "pre_val_bpb": round(pre_val_bpb, 8), "pre_val_loss": round(pre_val_loss, 8), "script_path": script_path, "train_tokens_seen": train_tokens_seen, "trainer_sha256": trainer_sha256, "val_max_seqs": args.val_max_seqs, "val_scope": val_scope}
     log0(f"final_metric_summary:{json.dumps(final_metric_summary, sort_keys=True)}")
     restore_parameters(ema_backup)
     if distributed:

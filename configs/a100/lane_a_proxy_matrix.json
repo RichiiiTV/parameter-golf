@@ -1,7 +1,6 @@
 {
   "classification": "GREEN",
   "env": {
-    "COMPILE_MODE": "off",
     "COMPUTE_DTYPE": "auto",
     "EVAL_BATCH_SEQS": "128",
     "EVAL_MODE": "sliding",
@@ -14,7 +13,6 @@
     "SCALAR_LR": "0.032",
     "SDPA_BACKEND": "auto",
     "TIED_EMBED_LR": "0.04",
-    "TRAIN_BATCH_TOKENS": "524288",
     "TRAIN_LOG_EVERY": "50",
     "TRAIN_SEQ_LEN": "2048",
     "VAL_LOSS_EVERY": "0",
@@ -23,10 +21,21 @@
   },
   "hardware": "4xA100",
   "lane": "a100_preflight",
-  "notes": "Lane A proxy baseline. End-only proxy eval with VAL_MAX_SEQS=1024 keeps A100 iteration fast while preserving sliding-eval policy.",
-  "profile": "a100-control-seq2048-fp16embed-slide64",
+  "matrix": {
+    "COMPILE_MODE": [
+      "off",
+      "fullgraph"
+    ],
+    "TRAIN_BATCH_TOKENS": [
+      "524288",
+      "786432",
+      "1048576"
+    ]
+  },
+  "notes": "Lane A proxy matrix. Run the 524288 points first, pick the better compile mode, then continue to higher batch sizes only for that lane-winning compile mode.",
+  "profile": "a100-lane-a-proxy-matrix",
   "promote": false,
-  "purpose": "Lane A proxy baseline at COMPILE_MODE=off and TRAIN_BATCH_TOKENS=524288.",
+  "purpose": "Throughput-first proxy sweep for the legacy seq2048 control on 4xA100.",
   "runtime_budget_minutes": 10,
-  "success_criteria": "Produce a clean proxy control score for side-by-side throughput and post-export comparison."
+  "success_criteria": "Find the best Lane A proxy point by lower post-export val_bpb, then higher train_tokens_seen, then lower pre_post_gap."
 }

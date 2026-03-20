@@ -2,7 +2,6 @@
   "classification": "GREEN",
   "env": {
     "ADAMW_WEIGHT_DECAY": "0.01",
-    "COMPILE_MODE": "off",
     "COMPUTE_DTYPE": "auto",
     "EVAL_BATCH_SEQS": "128",
     "EVAL_MODE": "sliding",
@@ -19,19 +18,29 @@
     "SDPA_BACKEND": "auto",
     "TIED_EMBED_INIT_MODE": "overtone",
     "TIED_EMBED_LR": "0.10",
-    "TRAIN_BATCH_TOKENS": "524288",
     "TRAIN_LOG_EVERY": "50",
     "TRAIN_SEQ_LEN": "1024",
     "VAL_LOSS_EVERY": "0",
-    "VAL_MAX_SEQS": "2048",
+    "VAL_MAX_SEQS": "0",
     "WARMDOWN_ITERS": "2500"
   },
   "hardware": "4xA100",
   "lane": "a100_preflight",
-  "notes": "Lane B proxy baseline. End-only proxy eval with VAL_MAX_SEQS=2048 keeps A100 iteration fast while preserving sliding-eval policy.",
-  "profile": "a100-primary-10l-muonwd-overtone-slide64",
+  "matrix": {
+    "COMPILE_MODE": [
+      "off",
+      "fullgraph"
+    ],
+    "TRAIN_BATCH_TOKENS": [
+      "524288",
+      "786432",
+      "1048576"
+    ]
+  },
+  "notes": "Lane B full sliding matrix. Use only the matching compile/batch point that won Lane B proxy ranking.",
+  "profile": "a100-lane-b-full-matrix",
   "promote": true,
-  "purpose": "Lane B proxy baseline at COMPILE_MODE=off and TRAIN_BATCH_TOKENS=524288.",
+  "purpose": "Full sliding rerun surface for the winning Lane B proxy point.",
   "runtime_budget_minutes": 10,
-  "success_criteria": "Beat Lane A on proxy post-export val_bpb or justify the throughput tradeoff with materially better export results."
+  "success_criteria": "Measure final full sliding post-export val_bpb for the winning Lane B proxy point."
 }

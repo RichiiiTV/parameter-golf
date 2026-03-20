@@ -2,7 +2,6 @@
   "classification": "GREEN",
   "env": {
     "ADAMW_WEIGHT_DECAY": "0.01",
-    "COMPILE_MODE": "off",
     "COMPUTE_DTYPE": "auto",
     "EVAL_BATCH_SEQS": "128",
     "EVAL_MODE": "sliding",
@@ -19,7 +18,6 @@
     "SDPA_BACKEND": "auto",
     "TIED_EMBED_INIT_MODE": "overtone",
     "TIED_EMBED_LR": "0.10",
-    "TRAIN_BATCH_TOKENS": "524288",
     "TRAIN_LOG_EVERY": "50",
     "TRAIN_SEQ_LEN": "1024",
     "VAL_LOSS_EVERY": "0",
@@ -28,10 +26,21 @@
   },
   "hardware": "4xA100",
   "lane": "a100_preflight",
-  "notes": "Lane B proxy baseline. End-only proxy eval with VAL_MAX_SEQS=2048 keeps A100 iteration fast while preserving sliding-eval policy.",
-  "profile": "a100-primary-10l-muonwd-overtone-slide64",
+  "matrix": {
+    "COMPILE_MODE": [
+      "off",
+      "fullgraph"
+    ],
+    "TRAIN_BATCH_TOKENS": [
+      "524288",
+      "786432",
+      "1048576"
+    ]
+  },
+  "notes": "Lane B proxy matrix. Run the 524288 points first, pick the better compile mode, then continue to higher batch sizes only for that lane-winning compile mode.",
+  "profile": "a100-lane-b-proxy-matrix",
   "promote": true,
-  "purpose": "Lane B proxy baseline at COMPILE_MODE=off and TRAIN_BATCH_TOKENS=524288.",
+  "purpose": "Throughput-first proxy sweep for the 10-layer Muon-WD overtone root candidate on 4xA100.",
   "runtime_budget_minutes": 10,
-  "success_criteria": "Beat Lane A on proxy post-export val_bpb or justify the throughput tradeoff with materially better export results."
+  "success_criteria": "Find the best Lane B proxy point by lower post-export val_bpb, then higher train_tokens_seen, then lower pre_post_gap."
 }
