@@ -66,36 +66,37 @@
 # Current hypotheses
 - The active SOTA path should live in a standalone record folder, not in root `train_gpt.py`.
 - The current March 20 top record is the right base for our fork.
-- Pre-projection RMSNorm is the first bold mechanism to test on top of that stack.
-- After mechanism selection, higher `TRAIN_BATCH_TOKENS` is the next throughput lever to sweep.
+- Higher `TRAIN_BATCH_TOKENS` on the parent March 20 stack is the next throughput lever to sweep.
+- Pre-projection RMSNorm is currently deferred after a negative same-folder 4xA100 ablation.
 
 # Current blockers
 - No H100 truth run has been executed from the new record fork yet.
-- The active docs and registry still need to reflect the March 20 frontier and the new fork.
 - Bold YELLOW lanes should stay isolated inside record-style contenders, not root.
+- The current record fork still needs H100 truth for the parent-stack throughput lane.
 
 # Current best candidates
 - `2026-03-20_10L_Int5MLP_MuonWD04_SWA50`
 - `2026-03-20_Int6_MLP3x_SmearGate_BigramHash_MuonWD_SWA`
-- `2026-03-20_PreProjRMSNorm_Int5MLP_Bigram10240_SWA`
+- `2026-03-20_PreProjRMSNorm_Int5MLP_Bigram10240_SWA` with `USE_PREPROJ_RMSNORM=0`
 
 # Next 10 experiments
 - Run 1: `USE_PREPROJ_RMSNORM=0` in `2026-03-20_PreProjRMSNorm_Int5MLP_Bigram10240_SWA`
-- Run 2: `USE_PREPROJ_RMSNORM=1` in `2026-03-20_PreProjRMSNorm_Int5MLP_Bigram10240_SWA`
-- Run 3: winner of Runs 1 and 2 at `TRAIN_BATCH_TOKENS=786432`
-- Run 4: winner at `TRAIN_BATCH_TOKENS=917504`
-- Run 5: winner at `TRAIN_BATCH_TOKENS=1048576`
-- Run 6: three-seed sweep at `SEED=42`
-- Run 7: three-seed sweep at `SEED=1337`
-- Run 8: three-seed sweep at `SEED=2024`
-- Run 9: recurrent/shared-width follow-up only if the pre-proj lane wins
-- Run 10: sparse outlier retention follow-up only if the pre-proj lane wins
+- Run 2: `USE_PREPROJ_RMSNORM=0` at `TRAIN_BATCH_TOKENS=917504`
+- Run 3: `USE_PREPROJ_RMSNORM=0` at `TRAIN_BATCH_TOKENS=1048576`
+- Run 4: three-seed sweep at `SEED=42` on the winning `USE_PREPROJ_RMSNORM=0` batch setting
+- Run 5: three-seed sweep at `SEED=1337` on the winning `USE_PREPROJ_RMSNORM=0` batch setting
+- Run 6: three-seed sweep at `SEED=2024` on the winning `USE_PREPROJ_RMSNORM=0` batch setting
+- Run 7: exact parent March 20 folder reproduction on H100 if the fork baseline diverges materially
+- Run 8: pre-proj RMSNorm revisit only if a later throughput-stable branch justifies it
+- Run 9: recurrent/shared-width follow-up only after a winning GREEN throughput lane exists
+- Run 10: sparse outlier retention follow-up only after a winning GREEN throughput lane exists
 
 # Decision log
 - Keep root `train_gpt.py` unchanged in the March 20 SOTA pass.
 - Build new SOTA attempts as standalone record folders under `records/track_10min_16mb`.
 - Treat the March 20 records as the operational frontier even if the root README is stale.
-- First bold mechanism on top of the March 20 winner is pre-projection RMSNorm.
+- Same-folder 4xA100 ablation for pre-projection RMSNorm was negative: `USE_PREPROJ_RMSNORM=0 -> 1.28120795`, `USE_PREPROJ_RMSNORM=1 -> 1.30713253`.
+- The active branch in the record fork is now the parent stack plus throughput sweeps with `USE_PREPROJ_RMSNORM=0`.
 - Keep Triton blocked until a winning post-March-20 GREEN lane exists and a standard-backend bottleneck is measured on H100.
 
 # Rules for modifying code

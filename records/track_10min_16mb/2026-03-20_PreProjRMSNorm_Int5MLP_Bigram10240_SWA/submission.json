@@ -1,8 +1,8 @@
 {
-  "name": "PreProj RMSNorm + 10L Int5-MLP + BigramHash(10240) + SWA(frac=0.4) + WD=0.04",
+  "name": "10L Int5-MLP + BigramHash(10240) + SWA(frac=0.4) + WD=0.04 Throughput Branch",
   "val_loss": null,
   "bytes_total": null,
-  "blurb": "Planned contender built on the 2026-03-20 top record. Keeps mixed int5/int6 export, BigramHash(10240), SmearGate, WD=0.04, and SWA(frac=0.4), while adding learnable pre-projection RMSNorm before attention, MLP, and bigram projection linears. Update after real H100 runs.",
+  "blurb": "Planned throughput-first branch built on the 2026-03-20 top record. Keeps mixed int5/int6 export, BigramHash(10240), SmearGate, WD=0.04, and SWA(frac=0.4). Same-folder 4xA100 ablation was negative for pre-projection RMSNorm, so the active path keeps USE_PREPROJ_RMSNORM=0 and prioritizes batch-token sweeps before revisiting that mechanism.",
   "author": "TBD",
   "github_id": "TBD",
   "date": "2026-03-20",

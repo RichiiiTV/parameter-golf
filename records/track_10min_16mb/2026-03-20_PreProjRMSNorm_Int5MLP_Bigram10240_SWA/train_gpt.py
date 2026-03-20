@@ -88,7 +88,7 @@ class Hyperparameters:
 
     bigram_vocab_size = int(os.environ.get("BIGRAM_VOCAB_SIZE", 10240))
     bigram_dim = int(os.environ.get("BIGRAM_DIM", 128))
-    use_preproj_rmsnorm = bool(int(os.environ.get("USE_PREPROJ_RMSNORM", "1")))
+    use_preproj_rmsnorm = bool(int(os.environ.get("USE_PREPROJ_RMSNORM", "0")))
 
     swa_enabled = bool(int(os.environ.get("SWA_ENABLED", "1")))
     swa_start_frac = float(os.environ.get("SWA_START_FRAC", 0.4))
@@ -499,6 +499,14 @@ class PreNormCastedLinear(nn.Module):
         super().__init__()
         self.norm = AffineRMSNorm(in_dim) if use_preproj_rmsnorm else None
         self.linear = CastedLinear(in_dim, out_dim, bias=bias)
+
+    @property
+    def weight(self) -> nn.Parameter:
+        return self.linear.weight
+
+    @property
+    def bias(self) -> nn.Parameter | None:
+        return self.linear.bias
 
     def forward(self, x: Tensor) -> Tensor:
         if self.norm is not None:

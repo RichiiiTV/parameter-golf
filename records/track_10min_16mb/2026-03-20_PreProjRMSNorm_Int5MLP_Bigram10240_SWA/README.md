@@ -1,16 +1,19 @@
-# PreProj RMSNorm + 10L Int5-MLP + BigramHash(10240) + SWA(frac=0.4) + WD=0.04
+# PreProj RMSNorm Ablation On 10L Int5-MLP + BigramHash(10240) + SWA(frac=0.4) + WD=0.04
 
-Planned record fork built on `2026-03-20_10L_Int5MLP_MuonWD04_SWA50`.
+Record fork built on `2026-03-20_10L_Int5MLP_MuonWD04_SWA50`.
 
 Status:
+- 4xA100 same-folder ablation: `USE_PREPROJ_RMSNORM=0 -> 1.28120795`, `USE_PREPROJ_RMSNORM=1 -> 1.30713253`
+- Decision: pre-projection RMSNorm underperformed by `+0.02592458 bpb`; the active path from this folder is now `USE_PREPROJ_RMSNORM=0`
 - H100 runs not executed yet from this folder.
 - `submission.json` is intentionally provisional until real H100 runs exist.
 
 ## Goal
 
-Keep the current March 20 top stack intact and test one bold paper-backed mechanism:
-- add dedicated learnable RMSNorm layers immediately before the matrix-heavy projections
-- leave the existing outer norms, SmearGate, BigramHash, SWA, mixed int5/int6 export, and sliding eval unchanged
+Keep the current March 20 top stack intact and push throughput first:
+- keep the parent stack unchanged by default
+- use this folder for parent-stack reproduction and batch-token sweeps
+- keep pre-projection RMSNorm as an explicit deferred ablation, not the mainline
 
 ## Exact Manual H100 Commands
 
@@ -18,36 +21,36 @@ Run these from this record folder.
 
 ### Stage 1: One-seed sanity
 
-Baseline reproduction without the new mechanism:
+Baseline reproduction on the active path:
 
 ```bash
 sbatch -c 6 --mem=20G --gres=gpu:8 -p batch_gpu -q 3h --wrap="RUN_ID=preproj_rmsnorm_parent USE_PREPROJ_RMSNORM=0 torchrun --standalone --nproc_per_node=8 train_gpt.py"
 ```
 
-Contender with the new mechanism enabled:
+Deferred mechanism ablation only if you explicitly want to revisit it:
 
 ```bash
 sbatch -c 6 --mem=20G --gres=gpu:8 -p batch_gpu -q 3h --wrap="RUN_ID=preproj_rmsnorm_on USE_PREPROJ_RMSNORM=1 torchrun --standalone --nproc_per_node=8 train_gpt.py"
 ```
 
-### Stage 2: Throughput sweep on the better mechanism setting
+### Stage 2: Throughput sweep on the active path
 
-Use the better of `USE_PREPROJ_RMSNORM=0` or `1`, then sweep:
+Sweep `TRAIN_BATCH_TOKENS` on `USE_PREPROJ_RMSNORM=0`:
 
 ```bash
-sbatch -c 6 --mem=20G --gres=gpu:8 -p batch_gpu -q 3h --wrap="RUN_ID=preproj_rmsnorm_b786k USE_PREPROJ_RMSNORM=1 TRAIN_BATCH_TOKENS=786432 torchrun --standalone --nproc_per_node=8 train_gpt.py"
-sbatch -c 6 --mem=20G --gres=gpu:8 -p batch_gpu -q 3h --wrap="RUN_ID=preproj_rmsnorm_b917k USE_PREPROJ_RMSNORM=1 TRAIN_BATCH_TOKENS=917504 torchrun --standalone --nproc_per_node=8 train_gpt.py"
-sbatch -c 6 --mem=20G --gres=gpu:8 -p batch_gpu -q 3h --wrap="RUN_ID=preproj_rmsnorm_b1048k USE_PREPROJ_RMSNORM=1 TRAIN_BATCH_TOKENS=1048576 torchrun --standalone --nproc_per_node=8 train_gpt.py"
+sbatch -c 6 --mem=20G --gres=gpu:8 -p batch_gpu -q 3h --wrap="RUN_ID=preproj_rmsnorm_b786k USE_PREPROJ_RMSNORM=0 TRAIN_BATCH_TOKENS=786432 torchrun --standalone --nproc_per_node=8 train_gpt.py"
+sbatch -c 6 --mem=20G --gres=gpu:8 -p batch_gpu -q 3h --wrap="RUN_ID=preproj_rmsnorm_b917k USE_PREPROJ_RMSNORM=0 TRAIN_BATCH_TOKENS=917504 torchrun --standalone --nproc_per_node=8 train_gpt.py"
+sbatch -c 6 --mem=20G --gres=gpu:8 -p batch_gpu -q 3h --wrap="RUN_ID=preproj_rmsnorm_b1048k USE_PREPROJ_RMSNORM=0 TRAIN_BATCH_TOKENS=1048576 torchrun --standalone --nproc_per_node=8 train_gpt.py"
 ```
 
 ### Stage 3: Three-seed promotion
 
-Use the winning Stage 2 setting and run:
+Use the winning Stage 2 setting on `USE_PREPROJ_RMSNORM=0` and run:
 
 ```bash
-sbatch -c 6 --mem=20G --gres=gpu:8 -p batch_gpu -q 3h --wrap="RUN_ID=preproj_rmsnorm_seed42 SEED=42 USE_PREPROJ_RMSNORM=1 TRAIN_BATCH_TOKENS=786432 torchrun --standalone --nproc_per_node=8 train_gpt.py"
-sbatch -c 6 --mem=20G --gres=gpu:8 -p batch_gpu -q 3h --wrap="RUN_ID=preproj_rmsnorm_seed1337 SEED=1337 USE_PREPROJ_RMSNORM=1 TRAIN_BATCH_TOKENS=786432 torchrun --standalone --nproc_per_node=8 train_gpt.py"
-sbatch -c 6 --mem=20G --gres=gpu:8 -p batch_gpu -q 3h --wrap="RUN_ID=preproj_rmsnorm_seed2024 SEED=2024 USE_PREPROJ_RMSNORM=1 TRAIN_BATCH_TOKENS=786432 torchrun --standalone --nproc_per_node=8 train_gpt.py"
+sbatch -c 6 --mem=20G --gres=gpu:8 -p batch_gpu -q 3h --wrap="RUN_ID=preproj_rmsnorm_seed42 SEED=42 USE_PREPROJ_RMSNORM=0 TRAIN_BATCH_TOKENS=786432 torchrun --standalone --nproc_per_node=8 train_gpt.py"
+sbatch -c 6 --mem=20G --gres=gpu:8 -p batch_gpu -q 3h --wrap="RUN_ID=preproj_rmsnorm_seed1337 SEED=1337 USE_PREPROJ_RMSNORM=0 TRAIN_BATCH_TOKENS=786432 torchrun --standalone --nproc_per_node=8 train_gpt.py"
+sbatch -c 6 --mem=20G --gres=gpu:8 -p batch_gpu -q 3h --wrap="RUN_ID=preproj_rmsnorm_seed2024 SEED=2024 USE_PREPROJ_RMSNORM=0 TRAIN_BATCH_TOKENS=786432 torchrun --standalone --nproc_per_node=8 train_gpt.py"
 ```
 
 Update the commands above if a higher batch token setting wins Stage 2.
@@ -63,7 +66,7 @@ Update the commands above if a higher batch token setting wins Stage 2.
 - SWA with `start_frac=0.4`, `every=50`
 - seq2048 and sliding eval `stride=64`
 
-## New Mechanism
+## Deferred Mechanism
 
 `USE_PREPROJ_RMSNORM=1` inserts learnable RMSNorm immediately before:
 - `attn.c_q`
@@ -75,6 +78,10 @@ Update the commands above if a higher batch token setting wins Stage 2.
 - `bigram.proj` when `bigram_dim != model_dim`
 
 The new RMSNorm scales initialize to `1.0`.
+
+Current status:
+- same-folder 4xA100 ablation was negative
+- do not spend H100 on this mechanism until the parent-stack throughput lane is settled
 
 ## Small Throughput Cleanup
 

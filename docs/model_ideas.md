@@ -6,9 +6,9 @@
 - Test `TRAIN_SEQ_LEN=4096` on top of that stack
 
 ## GREEN Mechanism Follow-Up
-- Add pre-projection RMSNorm after the best GREEN lane is established
-- Why now: the research garden flags this as the most promising near-term mechanism question and cites Steinmetz et al. (2025)
-- Constraint: only promote if the quality gain survives the throughput cost on H100
+- Keep pre-projection RMSNorm deferred for now
+- Evidence: same-folder 4xA100 ablation was negative (`USE_PREPROJ_RMSNORM=0 -> 1.28120795`, `USE_PREPROJ_RMSNORM=1 -> 1.30713253`)
+- Constraint: only revisit after the best GREEN throughput lane is established on H100
 
 ## YELLOW Architecture Lanes
 - Recurrent/shared-width transformer blocks
