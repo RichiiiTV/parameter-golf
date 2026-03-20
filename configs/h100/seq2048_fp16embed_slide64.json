@@ -23,10 +23,10 @@
   "h100_only": true,
   "hardware": "8xH100-SXM",
   "lane": "h100_ready",
-  "notes": "Canonical challenger composed from LongContextSeq2048 training, FP16Embed_WD3600 export handling, and SlidingWindowEval scoring. COMPILE_MODE, COMPUTE_DTYPE, and SDPA_BACKEND are H100 execution defaults, not new model-side levers.",
-  "profile": "h100-challenger-seq2048-fp16embed-slide64",
-  "purpose": "First manual H100 truth run intended to beat SlidingWindowEval with a strict composition of accepted levers.",
-  "promote": true,
+  "notes": "Legacy seq2048 control composed from LongContextSeq2048 training, FP16Embed_WD3600 export handling, and SlidingWindowEval scoring. Keep for relative comparison against the 10-layer Muon-WD path.",
+  "profile": "h100-legacy-control-seq2048-fp16embed-slide64",
+  "purpose": "Manual H100 control run for the old seq2048 + fp16 tok_emb + sliding path.",
+  "promote": false,
   "runtime_budget_minutes": 10,
-  "success_criteria": "Beat SlidingWindowEval at post-export val_bpb=1.19250007 without exceeding 16,000,000 artifact bytes."
+  "success_criteria": "Serve as the relative H100 control for the new 10-layer candidates."
 }

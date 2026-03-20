@@ -30,8 +30,10 @@ Validated local results on this GTX 1080 Ti:
 - `gtx1080ti-smoke`: completed with finite roundtrip metrics at seq512, `pre/post val_bpb=3.94218527 / 3.95601011`, `bytes_total=5,050,048`
 - `gtx1080ti-proxy1024`: completed with finite roundtrip metrics at seq1024, `pre/post val_bpb=4.01842393 / 4.03490743`, `bytes_total=5,049,873`
 - `gtx1080ti-export-proxy`: completed with finite roundtrip metrics at seq1024, `pre/post val_bpb=4.01853171 / 4.01945346`, `bytes_total=5,818,837`
+- `gtx1080ti-10l-feature-smoke`: completed with finite roundtrip metrics at seq512 sliding eval, `pre/post val_bpb=4.03572367 / 4.03573868`, `bytes_total=6,417,208`
 - Local finding: Pascal `fp16` was unstable for this trainer; checked-in GTX profiles now use explicit `fp32`
 - Local export finding: `KEEP_FLOAT_EXTRA=tok_emb.weight` reduced the seq1024 proxy pre/post gap from about `0.01648` to about `0.00092` at a byte cost of about `0.77 MB`
+- Local 10-layer finding: the new Muon-WD, overtone-init, and phase-transition code paths execute cleanly on Pascal, but GTX remains correctness-only and not a ranking surface for the 10-layer recipe
 
 Profiles:
 - `configs/local/gtx1080ti_smoke.json`: correctness, export roundtrip, registry, parser

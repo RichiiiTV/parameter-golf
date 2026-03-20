@@ -72,8 +72,12 @@ class Hyperparameters:
     head_lr = float(os.environ.get("HEAD_LR", 0.008))
     tied_embed_lr = float(os.environ.get("TIED_EMBED_LR", 0.05))
     tied_embed_init_std = float(os.environ.get("TIED_EMBED_INIT_STD", 0.005))
+    tied_embed_init_mode = os.environ.get("TIED_EMBED_INIT_MODE", "normal").lower()
+    tied_embed_overtone_power = float(os.environ.get("TIED_EMBED_OVERTONE_POWER", 0.5))
     matrix_lr = float(os.environ.get("MATRIX_LR", 0.04))
     scalar_lr = float(os.environ.get("SCALAR_LR", 0.04))
+    adamw_weight_decay = float(os.environ.get("ADAMW_WEIGHT_DECAY", 0.0))
+    muon_weight_decay = float(os.environ.get("MUON_WEIGHT_DECAY", 0.0))
     muon_momentum = float(os.environ.get("MUON_MOMENTUM", 0.95))
     muon_backend_steps = int(os.environ.get("MUON_BACKEND_STEPS", 5))
     muon_momentum_warmup_start = float(os.environ.get("MUON_MOMENTUM_WARMUP_START", 0.85))
@@ -82,6 +86,8 @@ class Hyperparameters:
     beta2 = float(os.environ.get("BETA2", 0.95))
     adam_eps = float(os.environ.get("ADAM_EPS", 1e-8))
     grad_clip_norm = float(os.environ.get("GRAD_CLIP_NORM", 0.0))
+    resid_mix_init = os.environ.get("RESID_MIX_INIT", "flat").lower()
+    resid_mix_phase_gain = float(os.environ.get("RESID_MIX_PHASE_GAIN", 3.0))
 def parse_name_patterns(raw: str) -> tuple[str, ...]:
     return tuple(part.strip() for part in raw.split(",") if part.strip())
 def hyperparameters_dict(args: Hyperparameters) -> dict[str, object]:
@@ -120,15 +126,32 @@ def resolve_runtime(args: Hyperparameters) -> tuple[torch.dtype, torch.dtype, st
     return compute_dtype, muon_dtype, sdpa_backend, compile_mode, fused
 def make_autocast_context(dtype: torch.dtype):
     return nullcontext() if dtype is torch.float32 else torch.autocast(device_type="cuda", dtype=dtype, enabled=True)
-def make_adam(params, *, lr: float, base_lr: float, betas: tuple[float, float], eps: float, fused: bool):
+def make_adam(
+    params,
+    *,
+    lr: float,
+    base_lr: float,
+    betas: tuple[float, float],
+    eps: float,
+    fused: bool,
+    weight_decay: float = 0.0,
+):
     param_groups = [{"params": params, "lr": lr, "base_lr": base_lr}]
-    kwargs = {"lr": lr, "betas": betas, "eps": eps}
+    kwargs = {"lr": lr, "betas": betas, "eps": eps, "weight_decay": weight_decay}
+    opt_cls = torch.optim.AdamW if weight_decay > 0.0 else torch.optim.Adam
     if fused:
         try:
-            return torch.optim.Adam(param_groups, fused=True, **kwargs)
+            return opt_cls(param_groups, fused=True, **kwargs)
         except TypeError:
             pass
-    return torch.optim.Adam(param_groups, **kwargs)
+    return opt_cls(param_groups, **kwargs)
+def apply_decoupled_weight_decay(params, *, lr: float, weight_decay: float) -> None:
+    if weight_decay <= 0.0:
+        return
+    scale = 1.0 - weight_decay * lr
+    with torch.no_grad():
+        for param in params:
+            param.mul_(scale)
 def resolve_validation_batch_seqs(args: Hyperparameters, *, world_size: int, seq_len: int) -> int:
     if args.val_batch_seqs > 0:
         return args.val_batch_seqs
@@ -725,18 +748,30 @@ class GPT(nn.Module):
         mlp_hidden: int,
         tie_embeddings: bool,
         tied_embed_init_std: float,
+        tied_embed_init_mode: str,
+        tied_embed_overtone_power: float,
         logit_softcap: float,
         rope_base: float,
         qk_gain_init: float,
         use_activation_checkpointing: bool,
+        resid_mix_init: str,
+        resid_mix_phase_gain: float,
     ):
         super().__init__()
         if logit_softcap <= 0.0:
             raise ValueError(f"logit_softcap must be positive, got {logit_softcap}")
+        if tied_embed_init_mode not in {"normal", "overtone"}:
+            raise ValueError(f"Unsupported TIED_EMBED_INIT_MODE={tied_embed_init_mode!r}")
+        if resid_mix_init not in {"flat", "phase_transition"}:
+            raise ValueError(f"Unsupported RESID_MIX_INIT={resid_mix_init!r}")
         self.tie_embeddings = tie_embeddings
         self.tied_embed_init_std = tied_embed_init_std
+        self.tied_embed_init_mode = tied_embed_init_mode
+        self.tied_embed_overtone_power = tied_embed_overtone_power
         self.logit_softcap = logit_softcap
         self.use_activation_checkpointing = use_activation_checkpointing
+        self.resid_mix_init = resid_mix_init
+        self.resid_mix_phase_gain = resid_mix_phase_gain
         self.tok_emb = nn.Embedding(vocab_size, model_dim)
         self.num_encoder_layers = num_layers // 2
         self.num_decoder_layers = num_layers - self.num_encoder_layers
@@ -764,9 +799,21 @@ class GPT(nn.Module):
     def _init_weights(self) -> None:
         if self.tie_embeddings:
             nn.init.normal_(self.tok_emb.weight, mean=0.0, std=self.tied_embed_init_std)
+            if self.tied_embed_init_mode == "overtone":
+                with torch.no_grad():
+                    U, S, V = torch.linalg.svd(self.tok_emb.weight.data, full_matrices=False)
+                    target_s = S[0] * torch.arange(1, S.shape[0] + 1, dtype=S.dtype).pow(-self.tied_embed_overtone_power)
+                    self.tok_emb.weight.data.copy_((U * target_s[None, :]) @ V)
         for module in self.modules():
             if isinstance(module, nn.Linear) and getattr(module, "_zero_init", False):
                 nn.init.zeros_(module.weight)
+        if self.resid_mix_init == "phase_transition":
+            num_layers = len(self.blocks)
+            for i, block in enumerate(self.blocks):
+                with torch.no_grad():
+                    phase = torch.sigmoid(torch.tensor(self.resid_mix_phase_gain * (i / max(num_layers - 1, 1) - 0.5)))
+                    block.resid_mix.data[0].fill_(float(phase))
+                    block.resid_mix.data[1].fill_(float(1.0 - phase))
     def _run_block(self, block: Block, x: Tensor, x0: Tensor) -> Tensor:
         if self.use_activation_checkpointing and self.training:
             return checkpoint(block, x, x0, use_reentrant=False)
@@ -878,7 +925,7 @@ def main() -> None:
     log0(f"train_loader:dataset:{dataset_name} train_shards:{actual_train_files} expected_train_shards:{expected_train_files if expected_train_files is not None else 'unknown'}")
     log0(f"val_loader:shards pattern={args.val_files} tokens:{val_tokens.numel() - 1}")
     log0(f"eval_mode:{args.eval_mode} eval_seq_len:{args.eval_seq_len} eval_stride:{args.eval_stride} eval_batch_seqs:{args.eval_batch_seqs if args.eval_batch_seqs > 0 else 'auto'} val_max_seqs:{args.val_max_seqs}")
-    base_model = GPT(vocab_size=args.vocab_size, num_layers=args.num_layers, model_dim=args.model_dim, num_heads=args.num_heads, num_kv_heads=args.num_kv_heads, mlp_mult=args.mlp_mult, mlp_hidden=args.mlp_hidden, tie_embeddings=args.tie_embeddings, tied_embed_init_std=args.tied_embed_init_std, logit_softcap=args.logit_softcap, rope_base=args.rope_base, qk_gain_init=args.qk_gain_init, use_activation_checkpointing=args.use_activation_checkpointing).to(device=device, dtype=compute_dtype)
+    base_model = GPT(vocab_size=args.vocab_size, num_layers=args.num_layers, model_dim=args.model_dim, num_heads=args.num_heads, num_kv_heads=args.num_kv_heads, mlp_mult=args.mlp_mult, mlp_hidden=args.mlp_hidden, tie_embeddings=args.tie_embeddings, tied_embed_init_std=args.tied_embed_init_std, tied_embed_init_mode=args.tied_embed_init_mode, tied_embed_overtone_power=args.tied_embed_overtone_power, logit_softcap=args.logit_softcap, rope_base=args.rope_base, qk_gain_init=args.qk_gain_init, use_activation_checkpointing=args.use_activation_checkpointing, resid_mix_init=args.resid_mix_init, resid_mix_phase_gain=args.resid_mix_phase_gain).to(device=device, dtype=compute_dtype)
     for module in base_model.modules():
         if isinstance(module, CastedLinear):
             module.float()
@@ -909,6 +956,7 @@ def main() -> None:
         betas=(args.beta1, args.beta2),
         eps=args.adam_eps,
         fused=use_fused_adam,
+        weight_decay=args.adamw_weight_decay,
     )
     optimizer_muon = Muon(
         matrix_params,
@@ -926,6 +974,7 @@ def main() -> None:
         betas=(args.beta1, args.beta2),
         eps=args.adam_eps,
         fused=use_fused_adam,
+        weight_decay=args.adamw_weight_decay,
     )
     optimizers: list[torch.optim.Optimizer] = [optimizer_tok, optimizer_muon, optimizer_scalar]
     if base_model.lm_head is not None:
@@ -936,6 +985,7 @@ def main() -> None:
             betas=(args.beta1, args.beta2),
             eps=args.adam_eps,
             fused=use_fused_adam,
+            weight_decay=0.0,
         )
         optimizers.insert(1, optimizer_head)
     ema_state = {name: param.detach().clone() for name, param in base_model.named_parameters()} if args.ema_decay > 0.0 else None
@@ -970,6 +1020,7 @@ def main() -> None:
     log0(f"train_batch_tokens:{args.train_batch_tokens} train_seq_len:{args.train_seq_len} iterations:{args.iterations} warmup_steps:{args.warmup_steps} max_wallclock_seconds:{args.max_wallclock_seconds:.3f}")
     log0(f"compute_dtype:{str(compute_dtype).removeprefix('torch.')} muon_dtype:{str(muon_dtype).removeprefix('torch.')} compile_mode:{compile_mode} use_fused_adam:{use_fused_adam} activation_checkpointing:{args.use_activation_checkpointing}")
     log0(f"keep_float_extra:{','.join(KEEP_FLOAT_EXTRA_NAME_PATTERNS) if KEEP_FLOAT_EXTRA_NAME_PATTERNS else 'none'} int8_clip_percentile:{INT8_CLIP_PERCENTILE:.8f} mlp_hidden:{args.mlp_hidden} ema_decay:{args.ema_decay} ema_start_step:{args.ema_start_step}")
+    log0(f"tied_embed_init_mode:{args.tied_embed_init_mode} tied_embed_overtone_power:{args.tied_embed_overtone_power:.3f} resid_mix_init:{args.resid_mix_init} resid_mix_phase_gain:{args.resid_mix_phase_gain:.3f} adamw_weight_decay:{args.adamw_weight_decay:.4f} muon_weight_decay:{args.muon_weight_decay:.4f}")
     log0(f"seed:{args.seed}")
     train_loader = DistributedTokenLoader(args.train_files, rank, world_size, device)
     def zero_grad_all() -> None:
@@ -1002,6 +1053,7 @@ def main() -> None:
                 (warmup_loss * grad_scale).backward()
             for opt in optimizers:
                 opt.step()
+            apply_decoupled_weight_decay(matrix_params, lr=optimizer_muon.param_groups[0]["lr"], weight_decay=args.muon_weight_decay)
             zero_grad_all()
             if args.warmup_steps <= 20 or (warmup_step + 1) % 10 == 0 or warmup_step + 1 == args.warmup_steps:
                 log0(f"warmup_step:{warmup_step + 1}/{args.warmup_steps}")
@@ -1059,6 +1111,7 @@ def main() -> None:
             torch.nn.utils.clip_grad_norm_(base_model.parameters(), args.grad_clip_norm)
         for opt in optimizers:
             opt.step()
+        apply_decoupled_weight_decay(matrix_params, lr=optimizer_muon.param_groups[0]["lr"], weight_decay=args.muon_weight_decay)
         zero_grad_all()
         step += 1
         update_ema()

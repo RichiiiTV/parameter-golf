@@ -1,62 +1,79 @@
 # Top Candidates
 
-## Accepted Record Ladder
-- `NaiveBaseline`: baseline architecture and training recipe
-- `LongContextSeq2048`: accepted training-side improvement
-- `FP16Embed_WD3600`: accepted export-side improvement
-- `SlidingWindowEval`: accepted eval-side improvement and current public best
-- Canonical challenger: strict composition of those accepted levers
-
 ## Current Public Best
-- `SlidingWindowEval`: `post-export val_bpb=1.19250007`
-- Interpretation: eval-only improvement over the baseline that currently sets the public bar to beat
+- `Sliding Window + FP16 Embed + 10L + Muon WD + Overtone Init`: `mean_val_bpb=1.17475315`, `artifact_bytes=15,374,243`
+- Record path: `records/track_10min_16mb/2026-03-19_SlidingWindow_FP16Emb_10L_MuonWD_OvertoneInit`
+- Interpretation: the public frontier now combines clean sliding eval, fp16 tied-embedding export, 10 layers, decoupled Muon weight decay, overtone tied-embedding init, and phase-transition `resid_mix` init
 
-## Canonical Challenger
-- `seq2048 + fp16 tok_emb passthrough + sliding eval stride 64`
-- Composition of `LongContextSeq2048`, `FP16Embed_WD3600`, and `SlidingWindowEval`
-- Keep the baseline architecture unchanged and do not add EMA, Triton, or new trainer features to the first challenger
-- Treat `COMPUTE_DTYPE=auto`, `SDPA_BACKEND=auto`, and `COMPILE_MODE=fullgraph` as H100 execution defaults, not as part of the accepted-lever composition
+## Root Candidate Ladder
+- Legacy control: `seq2048 + fp16 tok_emb export + sliding eval stride 64`
+- Primary root challenger: `10L + Muon WD + overtone init + phase-transition resid_mix + sliding eval stride 64 + fp16 tok_emb export`
+- Fallback root challenger: `10L + Muon WD + low LR + long warmdown + sliding eval stride 64 + fp16 tok_emb export`
+
+## Primary Root Challenger
+- `NUM_LAYERS=10`
+- `TRAIN_SEQ_LEN=1024`
+- `TIED_EMBED_LR=0.10`
+- `MATRIX_LR=0.04`
+- `SCALAR_LR=0.04`
+- `WARMDOWN_ITERS=2500`
+- `MUON_WEIGHT_DECAY=0.02`
+- `ADAMW_WEIGHT_DECAY=0.01`
+- `TIED_EMBED_INIT_MODE=overtone`
+- `RESID_MIX_INIT=phase_transition`
+- `KEEP_FLOAT_EXTRA=tok_emb.weight`
+- `EVAL_MODE=sliding`
+- `EVAL_SEQ_LEN=1024`
+- `EVAL_STRIDE=64`
+- `MLP_HIDDEN=0`
+
+## 4xA100 Preflight Order
+- Control: `configs/a100/seq2048_fp16embed_slide64_control.json`
+- Primary: `configs/a100/10l_muonwd_overtone_slide64_primary.json`
+- Fallback: `configs/a100/10l_muonwd_lowlr_slide64_fallback.json`
+- Promotion rule: only send the 10-layer path to H100 if it clearly beats the control on post-export `val_bpb` at the same 600-second budget
 
 ## Top 10 Low-Hanging Fruits
-- Promote the canonical composed challenger as the first manual H100 truth run
-- Tighten byte headroom around `tok_emb.weight` fp16 passthrough
-- Preserve `WARMDOWN_ITERS=3600` exactly in the seq2048 challenger
-- Keep `MLP_HIDDEN=992` as the byte-recovery setting for the challenger
-- Run the EMA variant only after the challenger has a truth result
-- Use `EVAL_BATCH_SEQS=1024` in the H100 challenger to match the accepted sliding-eval path
-- Compare eval seq len `2048` vs `4096` only after the challenger
-- Run the `SDPA_BACKEND` sweep only after the challenger
-- Run the `COMPILE_MODE` sweep only after the challenger
+- Port the top-1 10-layer stack into the root trainer without adding challenge-edge features
+- Keep `tok_emb.weight` in fp16 at export
+- Use clean sliding eval with `stride=64`
+- Add decoupled Muon weight decay only to matrix params
+- Add AdamW decay only to token/scalar groups
+- Use overtone tied-embedding init in the tied-weight path
+- Use phase-transition `resid_mix` init across blocks
+- Keep the low-LR, long-warmdown 10-layer fallback ready if the primary overfits or quantizes poorly
+- Benchmark `SDPA_BACKEND x COMPILE_MODE` only after the winning 10-layer candidate is identified
 - Keep Triton out until a standard-backend loss is measured on H100
 
 ## Top 5 Hopper-Specific Experiments
-- Canonical challenger: `seq2048 + fp16 tok_emb + sliding eval`
-- Same challenger plus EMA
-- Post-challenger `SDPA_BACKEND` sweep
-- Post-challenger `COMPILE_MODE` sweep
-- Eval seq len `2048` vs `4096` only if the challenger is under budget
+- Primary H100 run: `configs/h100/10l_muonwd_overtone_slide64.json`
+- Fallback H100 run: `configs/h100/10l_muonwd_lowlr_slide64.json`
+- Legacy control H100 run: `configs/h100/seq2048_fp16embed_slide64.json`
+- Post-winner `SDPA_BACKEND x COMPILE_MODE` matrix
+- EMA only after the 10-layer path has a truth result
 
 ## Top 5 Triton Opportunities Or Reasons To Avoid Triton
 - Avoid custom attention kernels
 - Avoid custom GEMM
 - Prefer standard SDPA/cuDNN/Inductor first
 - Consider export packing only after profiling
-- Consider sliding-eval scoring only after profiling
+- Keep Triton blocked until the 10-layer path has H100 truth data
 
 ## Top 5 Risky But Interesting Challenge-Edge Ideas
+- LoRA TTT
+- Mixed int8/int6 export
 - Eval-time adaptation
 - Recurrent/shared blocks
 - Tokenizer changes
-- Mixed-format export codecs
-- Bundled auxiliary eval state
 
 ## Top 3 Immediate Next Steps
-- Treat `SlidingWindowEval` as the current public target, not as an unfinished low-hanging fruit
-- Run the canonical composed challenger manually on H100
-- Run the EMA and systems follow-ups only after the challenger truth run
+- Run the 4xA100 control and primary challenger back-to-back
+- Run the 4xA100 fallback only if the primary recipe is unstable or loses too much post-export quality
+- Promote only the winning 10-layer path to H100 manual truth runs
 
 ## Local Proxy Notes
 - `gtx1080ti-smoke`: `pre/post val_bpb = 3.94218527 / 3.95601011`, `bytes_total=5,050,048`
 - `gtx1080ti-proxy1024`: `pre/post val_bpb = 4.01842393 / 4.03490743`, `bytes_total=5,049,873`
 - `gtx1080ti-export-proxy`: `pre/post val_bpb = 4.01853171 / 4.01945346`, `bytes_total=5,818,837`
-- Local conclusion: `KEEP_FLOAT_EXTRA=tok_emb.weight` is a strong export-gap lever on GTX, shrinking the post-export gap by about `18x`, but it costs about `0.77 MB` and still needs H100 truth runs before promotion
+- `gtx1080ti-10l-feature-smoke`: `pre/post val_bpb = 4.03572367 / 4.03573868`, `bytes_total=6,417,208`, `eval_time_ms=2740`
+- Local conclusion: `KEEP_FLOAT_EXTRA=tok_emb.weight` is a strong export-gap lever on GTX, shrinking the post-export gap by about `18x`, but it costs about `0.77 MB` and still needs A100/H100 truth runs before promotion

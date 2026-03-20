@@ -2,6 +2,7 @@
   "classification": "GREEN",
   "env": {
     "ADAMW_WEIGHT_DECAY": "0.01",
+    "COMPILE_MODE": "fullgraph",
     "COMPUTE_DTYPE": "auto",
     "EVAL_BATCH_SEQS": "1024",
     "EVAL_MODE": "sliding",
@@ -15,31 +16,22 @@
     "NUM_LAYERS": "10",
     "RESID_MIX_INIT": "phase_transition",
     "SCALAR_LR": "0.04",
+    "SDPA_BACKEND": "auto",
     "TIED_EMBED_INIT_MODE": "overtone",
     "TIED_EMBED_LR": "0.10",
     "TRAIN_BATCH_TOKENS": "524288",
+    "TRAIN_LOG_EVERY": "50",
     "TRAIN_SEQ_LEN": "1024",
+    "VAL_LOSS_EVERY": "1000",
     "WARMDOWN_ITERS": "2500"
   },
   "h100_only": true,
   "hardware": "8xH100-SXM",
   "lane": "h100_ready",
-  "matrix": {
-    "COMPILE_MODE": [
-      "off",
-      "muon_only",
-      "fullgraph"
-    ],
-    "SDPA_BACKEND": [
-      "auto",
-      "flash",
-      "cudnn"
-    ]
-  },
-  "notes": "Post-challenger systems benchmark matrix for the winning 10-layer Muon-WD/overtone candidate.",
-  "profile": "h100-post10l-sdpa-compile-matrix",
-  "purpose": "Benchmark backend and compile choices only after the primary 10-layer challenger has a truth result.",
-  "promote": false,
+  "notes": "Primary H100 root challenger based on the March 19 top-1 stack, ported into the clean root trainer.",
+  "profile": "h100-primary-10l-muonwd-overtone-slide64",
+  "promote": true,
+  "purpose": "Primary manual H100 truth run for the root-trainer 10-layer Muon-WD/overtone/phase-transition candidate.",
   "runtime_budget_minutes": 10,
-  "success_criteria": "Find the best steady-state throughput and final score combination without breaking reproducibility."
+  "success_criteria": "Beat the legacy seq2048 control and target the current public bar near post-export val_bpb=1.1748 without exceeding 16,000,000 bytes."
 }

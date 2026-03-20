@@ -1,11 +1,9 @@
 {
   "classification": "GREEN",
   "env": {
-    "COMPILE_MODE": "fullgraph",
+    "COMPILE_MODE": "off",
     "COMPUTE_DTYPE": "auto",
-    "EMA_DECAY": "0.999",
-    "EMA_START_STEP": "2000",
-    "EVAL_BATCH_SEQS": "1024",
+    "EVAL_BATCH_SEQS": "128",
     "EVAL_MODE": "sliding",
     "EVAL_SEQ_LEN": "2048",
     "EVAL_STRIDE": "64",
@@ -22,13 +20,12 @@
     "VAL_LOSS_EVERY": "1000",
     "WARMDOWN_ITERS": "3600"
   },
-  "h100_only": true,
-  "hardware": "8xH100-SXM",
-  "lane": "h100_ready",
-  "notes": "EMA follow-up for the legacy seq2048 control. Run only after the 10-layer path has H100 truth data.",
-  "profile": "h100-legacy-followup-seq2048-fp16embed-slide64-ema",
-  "purpose": "Legacy EMA follow-up for the old seq2048 control path.",
+  "hardware": "4xA100",
+  "lane": "a100_preflight",
+  "notes": "Legacy seq2048 control for relative comparison against the new 10-layer root candidate. EVAL_BATCH_SEQS is reduced for safer 4xA100 preflight memory.",
+  "profile": "a100-control-seq2048-fp16embed-slide64",
   "promote": false,
+  "purpose": "Run the old seq2048 + fp16 tok_emb + sliding path as the control before evaluating the new 10-layer recipe.",
   "runtime_budget_minutes": 10,
-  "success_criteria": "Reduce pre/post export gap on the legacy control without losing too many training-side gains."
+  "success_criteria": "Produce a clean control score for side-by-side comparison with the 10-layer candidates."
 }
