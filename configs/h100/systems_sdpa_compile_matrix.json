@@ -1,0 +1,40 @@
+{
+  "classification": "GREEN",
+  "env": {
+    "COMPUTE_DTYPE": "auto",
+    "EVAL_BATCH_SEQS": "1024",
+    "EVAL_MODE": "sliding",
+    "EVAL_SEQ_LEN": "2048",
+    "EVAL_STRIDE": "64",
+    "KEEP_FLOAT_EXTRA": "tok_emb.weight",
+    "MATRIX_LR": "0.032",
+    "MAX_WALLCLOCK_SECONDS": "600",
+    "MLP_HIDDEN": "992",
+    "SCALAR_LR": "0.032",
+    "TIED_EMBED_LR": "0.04",
+    "TRAIN_BATCH_TOKENS": "524288",
+    "TRAIN_SEQ_LEN": "2048",
+    "WARMDOWN_ITERS": "3600"
+  },
+  "h100_only": true,
+  "hardware": "8xH100-SXM",
+  "lane": "h100_ready",
+  "matrix": {
+    "COMPILE_MODE": [
+      "off",
+      "muon_only",
+      "fullgraph"
+    ],
+    "SDPA_BACKEND": [
+      "auto",
+      "flash",
+      "cudnn"
+    ]
+  },
+  "notes": "Post-challenger systems benchmark matrix for the best composed ML candidate.",
+  "profile": "h100-postchallenger-sdpa-compile-matrix",
+  "purpose": "Benchmark backend and compile choices only after the primary challenger has a truth result.",
+  "promote": false,
+  "runtime_budget_minutes": 10,
+  "success_criteria": "Find the best steady-state throughput and final score combination without breaking reproducibility."
+}

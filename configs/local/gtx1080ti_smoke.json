@@ -1,0 +1,30 @@
+{
+  "classification": "GREEN",
+  "env": {
+    "COMPILE_MODE": "auto",
+    "COMPUTE_DTYPE": "fp32",
+    "EVAL_MODE": "standard",
+    "EVAL_SEQ_LEN": "512",
+    "GRAD_CLIP_NORM": "1.0",
+    "GRAD_ACCUM_STEPS_OVERRIDE": "16",
+    "ITERATIONS": "10",
+    "MAX_WALLCLOCK_SECONDS": "0",
+    "MUON_DTYPE": "fp32",
+    "SDPA_BACKEND": "auto",
+    "SKIP_RAW_EXPORT": "1",
+    "TRAIN_BATCH_TOKENS": "8192",
+    "TRAIN_LOG_EVERY": "10",
+    "TRAIN_SEQ_LEN": "512",
+    "USE_FUSED_ADAM": "0",
+    "VAL_BATCH_SEQS": "2",
+    "VAL_LOSS_EVERY": "0",
+    "VAL_MAX_SEQS": "32",
+    "WARMUP_STEPS": "0"
+  },
+  "hardware": "GTX1080Ti",
+  "lane": "local_proxy",
+  "next_action": "Verify Pascal-safe bring-up and export roundtrip.",
+  "notes": "One-shard smoke profile for the local GTX 1080 Ti with explicit fp32 stability settings, gradient clipping, and a short fixed iteration budget.",
+  "profile": "gtx1080ti-smoke",
+  "promote": false
+}

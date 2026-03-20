@@ -1,0 +1,32 @@
+{
+  "classification": "GREEN",
+  "env": {
+    "COMPILE_MODE": "fullgraph",
+    "COMPUTE_DTYPE": "auto",
+    "EVAL_BATCH_SEQS": "1024",
+    "EVAL_MODE": "sliding",
+    "EVAL_SEQ_LEN": "2048",
+    "EVAL_STRIDE": "64",
+    "KEEP_FLOAT_EXTRA": "tok_emb.weight",
+    "MATRIX_LR": "0.032",
+    "MAX_WALLCLOCK_SECONDS": "600",
+    "MLP_HIDDEN": "992",
+    "SCALAR_LR": "0.032",
+    "SDPA_BACKEND": "auto",
+    "TIED_EMBED_LR": "0.04",
+    "TRAIN_BATCH_TOKENS": "524288",
+    "TRAIN_LOG_EVERY": "50",
+    "TRAIN_SEQ_LEN": "2048",
+    "VAL_LOSS_EVERY": "1000",
+    "WARMDOWN_ITERS": "3600"
+  },
+  "h100_only": true,
+  "hardware": "8xH100-SXM",
+  "lane": "h100_ready",
+  "notes": "Canonical challenger composed from LongContextSeq2048 training, FP16Embed_WD3600 export handling, and SlidingWindowEval scoring. COMPILE_MODE, COMPUTE_DTYPE, and SDPA_BACKEND are H100 execution defaults, not new model-side levers.",
+  "profile": "h100-challenger-seq2048-fp16embed-slide64",
+  "purpose": "First manual H100 truth run intended to beat SlidingWindowEval with a strict composition of accepted levers.",
+  "promote": true,
+  "runtime_budget_minutes": 10,
+  "success_criteria": "Beat SlidingWindowEval at post-export val_bpb=1.19250007 without exceeding 16,000,000 artifact bytes."
+}

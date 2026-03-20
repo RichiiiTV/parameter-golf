@@ -1,0 +1,8 @@
+numpy
+tqdm
+huggingface-hub
+setuptools
+typing-extensions==4.15.0
+datasets
+tiktoken
+sentencepiece

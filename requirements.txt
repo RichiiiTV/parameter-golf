@@ -1,3 +1,6 @@
+# Reference package list for general self-setup.
+# For the validated Windows GTX local path, use `requirements-local.txt`
+# plus `scripts/bootstrap_local_windows.ps1`.
 numpy
 tqdm
 torch
