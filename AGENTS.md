@@ -2,10 +2,10 @@
 - Maximize final post-export `val_bpb` under the 16,000,000-byte artifact cap and the 10-minute train / 10-minute eval limits on 8xH100 SXM.
 
 # Current challenge interpretation
-- Source of truth is the official `README.md` plus accepted `records/`.
-- Current public bar is `records/track_10min_16mb/2026-03-20_10L_Int5MLP_MuonWD04_SWA50` at `mean_val_bpb=1.14276`.
+- Source of truth for accepted records is the official `README.md` plus accepted `records/`.
+- Operational SOTA source of truth for this pass is local `pr332`, specifically `records/track_10min_16mb/2026-03-21_12L_GradQuant_PartialRoPE_EMA`, which reports `val_bpb=1.1320`.
+- The merged upstream `README.md` still shows the March 20 winner at `1.1428`, so root work in this pass is intentionally targeting the ahead-of-README PR frontier.
 - Active work is H100-only, manual-only, and throughput-first.
-- Evaluation can be aggressive if it is reproducible, self-contained, under 10 minutes on 8xH100, and does not access external data or network.
 
 # Hard constraints
 - Never auto-run H100 jobs.
@@ -16,18 +16,19 @@
 
 # Local environment assumptions
 - Windows PowerShell is the local editing environment.
-- Local correctness runs are legacy only and are not part of the active workflow.
-- Local machines are for code review, dry checks, and handoff generation, not ranking.
+- Local machines are for code review, static checks, and H100 handoff generation only.
+- Local correctness runs are legacy only and are not part of the active ranking workflow.
 
 # H100 target assumptions
 - Single-node 8xH100 SXM.
 - Human-gated only.
-- Standard PyTorch/cuDNN/Inductor paths are the default optimization surface.
-- Root `train_gpt.py` should look like the official upstream trainer plus narrow record-backed deltas.
+- Standard PyTorch paths are the default optimization surface.
+- Root `train_gpt.py` is the canonical runner for this pass and should stay near-verbatim to the `#332` donor script.
+- `flash-attn` is optional in code and recommended in the H100 environment, not a mandatory repo dependency.
 
 # GREEN / YELLOW / RED idea board
-- `GREEN`: mixed int5/int6 export, BigramHash, SmearGate, SWA, sliding eval, seq2048 throughput tuning, 10 layers, Muon/AdamW weight decay, zstd-22 fallback compression.
-- `YELLOW`: pre-projection RMSNorm, recurrent/shared-width transformers, sparse high-precision outlier retention, tokenizer changes, eval-time adaptation, custom Triton kernels.
+- `GREEN`: gradient-guided adaptive quantization, 12 layers, `MLP_HIDDEN=1408`, `BIGRAM_VOCAB_SIZE=2048`, `BIGRAM_DIM=128`, `TRAIN_SEQ_LEN=2048`, `TRAIN_BATCH_TOKENS=524288`, `PARTIAL_ROPE_DIMS=16`, `LN_SCALE=1`, `XSA_LAST_N=4`, `EMA_ENABLED=1`, sliding eval at `stride=64`, bigger BigramHash table if it fits measured byte headroom.
+- `YELLOW`: `EVAL_SEQ_LEN=4096` follow-up, recurrent/shared-width transformers, sparse high-precision outlier retention, tokenizer changes, eval-time adaptation, custom Triton kernels.
 - `RED`: auto-launched H100 jobs, over-budget train/eval, network/data access during eval, oversized artifact, seed brute force.
 
 # Roles and ownership
@@ -64,50 +65,56 @@
 - `result.json`
 
 # Current hypotheses
-- The active SOTA path should live in a standalone record folder, not in root `train_gpt.py`.
-- The current March 20 top record is the right base for our fork.
-- Higher `TRAIN_BATCH_TOKENS` on the parent March 20 stack is the next throughput lever to sweep.
-- Pre-projection RMSNorm is currently deferred after a negative same-folder 4xA100 ablation.
+- Root `train_gpt.py` should be an exact `#332` port first, not another March 20 derivative.
+- The strongest first improvement is a combined throughput-and-capacity branch: `TRAIN_BATCH_TOKENS=458752`, `ITERATIONS=11000`, and `BIGRAM_VOCAB_SIZE=4096`.
+- The batch reduction is meant to buy more optimization steps inside 600 seconds; the higher iteration cap keeps that gain from being clipped by the static `9000` iteration ceiling.
+- The bigger BigramHash table spends measured artifact headroom at near-zero training-step cost.
+- The next follow-up should be an eval-only context increase to `EVAL_SEQ_LEN=4096` only if the combined branch stays within the eval budget.
 
 # Current blockers
-- No H100 truth run has been executed from the new record fork yet.
-- Bold YELLOW lanes should stay isolated inside record-style contenders, not root.
-- The current record fork still needs H100 truth for the parent-stack throughput lane.
+- No H100 truth run has been executed from the root `#332` port yet.
+- No H100 truth run has been executed from the combined `b458k + BIGRAM_VOCAB_SIZE=4096` root variant yet.
+- The eval-only `EVAL_SEQ_LEN=4096` follow-up is budget-gated and should not be promoted before the combined branch is healthy.
 
 # Current best candidates
-- `2026-03-20_10L_Int5MLP_MuonWD04_SWA50`
-- `2026-03-20_Int6_MLP3x_SmearGate_BigramHash_MuonWD_SWA`
-- `2026-03-20_PreProjRMSNorm_Int5MLP_Bigram10240_SWA` with `USE_PREPROJ_RMSNORM=0`
+- root `train_gpt.py` exact `#332` reproduction
+- root `train_gpt.py` with `TRAIN_BATCH_TOKENS=458752`, `ITERATIONS=11000`, `BIGRAM_VOCAB_SIZE=4096`
+- root `train_gpt.py` with `TRAIN_BATCH_TOKENS=458752`, `ITERATIONS=11000`, `BIGRAM_VOCAB_SIZE=4096`, `EVAL_SEQ_LEN=4096`, `EVAL_BATCH_SEQS=16`
 
 # Next 10 experiments
-- Run 1: `USE_PREPROJ_RMSNORM=0` in `2026-03-20_PreProjRMSNorm_Int5MLP_Bigram10240_SWA`
-- Run 2: `USE_PREPROJ_RMSNORM=0` at `TRAIN_BATCH_TOKENS=917504`
-- Run 3: `USE_PREPROJ_RMSNORM=0` at `TRAIN_BATCH_TOKENS=1048576`
-- Run 4: three-seed sweep at `SEED=42` on the winning `USE_PREPROJ_RMSNORM=0` batch setting
-- Run 5: three-seed sweep at `SEED=1337` on the winning `USE_PREPROJ_RMSNORM=0` batch setting
-- Run 6: three-seed sweep at `SEED=2024` on the winning `USE_PREPROJ_RMSNORM=0` batch setting
-- Run 7: exact parent March 20 folder reproduction on H100 if the fork baseline diverges materially
-- Run 8: pre-proj RMSNorm revisit only if a later throughput-stable branch justifies it
-- Run 9: recurrent/shared-width follow-up only after a winning GREEN throughput lane exists
-- Run 10: sparse outlier retention follow-up only after a winning GREEN throughput lane exists
+- Run 1: exact root `#332` reproduction
+- Run 2: root `#332` with `TRAIN_BATCH_TOKENS=458752`, `ITERATIONS=11000`, and `BIGRAM_VOCAB_SIZE=4096`
+- Run 3: Run 2 plus `EVAL_SEQ_LEN=4096 EVAL_BATCH_SEQS=16` if Run 2 stays within eval budget
+- Run 4: three-seed sweep at `SEED=1337` on the winning root `#332` or `BIGRAM_VOCAB_SIZE=4096` setting
+- Run 5: three-seed sweep at `SEED=1338` on the winning root `#332` or `BIGRAM_VOCAB_SIZE=4096` setting
+- Run 6: three-seed sweep at `SEED=1339` on the winning root `#332` or `BIGRAM_VOCAB_SIZE=4096` setting
+- Run 7: exact March 20 accepted top record only if the root `#332` port diverges materially
+- Run 8: bigger BigramHash follow-up beyond `4096` only if bytes leave further headroom
+- Run 9: YELLOW `EVAL_SEQ_LEN=4096` promotion only after a healthy `BIGRAM_VOCAB_SIZE=4096` run
+- Run 10: recurrent/shared-width or sparse-outlier follow-up only after a winning GREEN root lane exists
 
 # Decision log
-- Keep root `train_gpt.py` unchanged in the March 20 SOTA pass.
-- Build new SOTA attempts as standalone record folders under `records/track_10min_16mb`.
-- Treat the March 20 records as the operational frontier even if the root README is stale.
-- Same-folder 4xA100 ablation for pre-projection RMSNorm was negative: `USE_PREPROJ_RMSNORM=0 -> 1.28120795`, `USE_PREPROJ_RMSNORM=1 -> 1.30713253`.
-- The active branch in the record fork is now the parent stack plus throughput sweeps with `USE_PREPROJ_RMSNORM=0`.
-- Keep Triton blocked until a winning post-March-20 GREEN lane exists and a standard-backend bottleneck is measured on H100.
+- Port root `train_gpt.py` from local `pr332:records/track_10min_16mb/2026-03-21_12L_GradQuant_PartialRoPE_EMA/train_gpt.py`.
+- Keep the root port semantically identical to `#332`; only trim comments/blank lines for the line cap.
+- Keep root default `BIGRAM_VOCAB_SIZE=2048`; express the `4096` upgrade in configs, not by silently changing the donor baseline.
+- Promote a smaller-batch branch as the main improvement because `#332` itself attributes part of its gain to more optimization steps from a reduced batch.
+- Use `TRAIN_BATCH_TOKENS=458752` because it is a conservative 12.5% reduction from `524288` that preserves clean geometry at `TRAIN_SEQ_LEN=2048`.
+- Raise `ITERATIONS` to `11000` on that branch so the run stays wallclock-limited instead of clipping against the donor `9000`-iteration ceiling.
+- Spend remaining artifact headroom with `BIGRAM_VOCAB_SIZE=4096`.
+- Defer `EVAL_SEQ_LEN=4096` to a run-level follow-up because it is eval-budget-gated.
+- Keep `flash-attn` optional in code.
+- Keep Triton blocked until a winning post-`#332` GREEN lane exists and a standard-backend bottleneck is measured on H100.
 
 # Rules for modifying code
 - Keep record-critical logic in `train_gpt.py`.
-- Keep root changes minimal during SOTA work.
-- Prefer record-folder implementations for aggressive ideas.
-- Do not mutate root `train_gpt.py` in the March 20 record-fork pass.
+- Keep root changes minimal and close to the donor `#332` structure.
+- Do not stack multiple algorithmic deltas in the same root pass.
+- Prefer record-folder implementations for aggressive YELLOW ideas.
 
 # Rules for adding dependencies
-- No new mandatory runtime dependencies in this reset pass.
+- No new mandatory runtime dependencies in this pass.
 - Standard library only for workflow scripts.
+- `flash-attn` remains optional and cluster-side.
 - Do not add Triton or other optional packages unless a later H100 benchmark proves they matter.
 
 # Rules for touching metric/eval code
@@ -134,4 +141,4 @@
 # Local-to-H100 transfer policy
 - The active workflow is H100-only.
 - Local machines are for editing, static validation, and manual command generation.
-- Do not rank active candidates from GTX or A100 behavior in this reset phase.
+- Do not rank active candidates from GTX or A100 behavior in this pass.

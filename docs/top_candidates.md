@@ -1,62 +1,40 @@
 # Top Candidates
 
-## Current Public Best
-- `10L Int5-MLP + BigramHash(10240) + SWA(frac=0.4) + WD=0.04`: `mean_val_bpb=1.14276`, `artifact_bytes~15.9M`
-- Record path: `records/track_10min_16mb/2026-03-20_10L_Int5MLP_MuonWD04_SWA50`
-- Runner-up: `records/track_10min_16mb/2026-03-20_Int6_MLP3x_SmearGate_BigramHash_MuonWD_SWA` at `1.1458`
-- Interpretation: the active frontier is mixed int5/int6 export plus SmearGate, BigramHash, and SWA.
+## Operational Frontier
+- Operational SOTA for this pass is local `pr332:records/track_10min_16mb/2026-03-21_12L_GradQuant_PartialRoPE_EMA` at `val_bpb=1.1320`, `bytes_total=15,652,352`.
+- The merged upstream README still shows the March 20 winner at `1.1428`, so the root port is intentionally targeting the ahead-of-README PR frontier.
 
-## Active H100 Ladder
-- `2026-03-20_PreProjRMSNorm_Int5MLP_Bigram10240_SWA` with `USE_PREPROJ_RMSNORM=0`
-- Batch sweep on `USE_PREPROJ_RMSNORM=0` at `786432`, `917504`, `1048576`
-- Three-seed rerun on the winning setting
-- Exact parent-folder reproduction only if the fork baseline diverges materially
-- Only then consider recurrent/shared-width or sparse outlier retention
+## Active Root Mainline
+- root `train_gpt.py` is now a near-verbatim `#332` port.
+- Exact baseline config: `configs/h100/root_pr332_repro.json`
+- Main improvement config: `configs/h100/root_pr332_b458k_bigram4096.json`
+- Eval-only follow-up: `configs/h100/root_pr332_b458k_bigram4096_eval4096.json`
 
-## Top 10 Low-Hanging Fruits
-- Fork the March 20 top record instead of extending root `train_gpt.py`
-- Keep mixed int5/int6 export exactly as the parent record does it
-- Keep BigramHash at `10240`
-- Keep SmearGate and SWA unchanged on the first contender
-- Push more train tokens through the parent stack before adding a new mechanism
-- Keep sliding eval fixed at `stride=64`
-- Keep `VAL_LOSS_EVERY=0` by default in the contender
-- Sweep `TRAIN_BATCH_TOKENS` on the parent stack
-- Compare candidates by post-export `val_bpb` first, not pre-export loss
-- Keep Triton blocked until a winning post-March-20 lane exists
+## Main Prediction
+- Prediction: `#332 + TRAIN_BATCH_TOKENS=458752 + ITERATIONS=11000 + BIGRAM_VOCAB_SIZE=4096` is more likely than not to beat exact `#332` on post-export `val_bpb`.
+- This is an inference, not a measured claim.
 
-## Top 5 Hopper-Specific Experiments
-- March 20 parent reproduction
-- `TRAIN_BATCH_TOKENS=786432`
-- `TRAIN_BATCH_TOKENS=917504`
-- `TRAIN_BATCH_TOKENS=1048576`
-- Pre-proj RMSNorm revisit only after the throughput lane is settled
+## Why This Delta
+- `#332` reports `15,652,352` bytes, leaving `347,648` bytes of cap headroom under `16,000,000`.
+- Doubling `BIGRAM_VOCAB_SIZE` from `2048` to `4096` adds `2048 * 128 = 262,144` weights.
+- At an int6-like payload this is about `196,608` raw bytes, plus about `4,096` bytes for additional fp16 row scales, leaving margin before compression.
+- A nearby accepted record already showed that more BigramHash capacity helped: `8192 -> 10240` improved by `0.0008 bpb` in `records/track_10min_16mb/2026-03-20_10L_Int5MLP_MuonWD04_SWA50/README.md`.
+- `#332` also explicitly argues that moving from `786432` to `524288` batch tokens improved quality because it bought about 22% more optimization steps in the same budget.
+- A further reduction from `524288` to `458752` is a conservative 12.5% step-cost cut. If step time scaled roughly with tokens, `74 ms -> ~64.75 ms`, which implies roughly `9260` train steps in 600 seconds instead of `~8054`.
+- Because of that, `ITERATIONS` must be raised above `9000`; otherwise the run risks hitting the static iteration ceiling before the wallclock limit.
 
-## Top 5 Triton Opportunities Or Reasons To Avoid Triton
-- Avoid custom attention kernels; SDPA is already vendor-tuned
-- Avoid custom GEMM; cuBLAS is not the bottleneck to out-engineer first
-- Prefer standard PyTorch/cuDNN/Inductor until a real H100 hotspot is measured
-- Only revisit export-side Triton if sparse outlier retention survives paper review and profiling
-- Keep Triton out of the root mainline
-
-## Top 5 Risky But Interesting Challenge-Edge Ideas
-- Pre-projection RMSNorm as a deferred mechanism change
-- Recurrent/shared-width transformers
-- Sparse or decoupled high-precision outlier preservation
-- Tokenizer/vocabulary redesign
-- Eval-time auxiliary state or adaptation
-
-## Top 3 Immediate Next Steps
-- Run the new record fork with `USE_PREPROJ_RMSNORM=0`
-- Sweep batch tokens on `USE_PREPROJ_RMSNORM=0`
-- Only revisit `USE_PREPROJ_RMSNORM=1` if a later throughput-stable branch justifies it
+## Immediate Ladder
+- Run 1: exact `#332` root reproduction
+- Run 2: exact `#332` plus `TRAIN_BATCH_TOKENS=458752`, `ITERATIONS=11000`, and `BIGRAM_VOCAB_SIZE=4096`
+- Run 3: Run 2 plus `EVAL_SEQ_LEN=4096 EVAL_BATCH_SEQS=16` only if Run 2 stays inside the eval budget
 
 ## Ranking Policy
 - Rank by lower post-export `val_bpb`
 - Require `bytes_total < 16,000,000`
 - Break close ties by higher train tokens processed under the same 600-second budget
 
-## Manual Interface
-- The active SOTA path is self-contained inside `records/track_10min_16mb/2026-03-20_PreProjRMSNorm_Int5MLP_Bigram10240_SWA`
-- Submit the exact `sbatch -c 6 --mem=20G --gres=gpu:8 -p batch_gpu -q 3h --wrap="..."` commands listed in that folder's `README.md`
-- Same-folder 4xA100 ablation result: `USE_PREPROJ_RMSNORM=0 -> 1.28120795`, `USE_PREPROJ_RMSNORM=1 -> 1.30713253`
+## Deferred Ideas
+- `EVAL_SEQ_LEN=4096` is a run-level follow-up, not the primary code delta
+- Recurrent/shared-width transformers remain YELLOW
+- Sparse high-precision outlier retention remains YELLOW
+- Triton remains blocked until a winning post-`#332` GREEN lane exists

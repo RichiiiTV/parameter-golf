@@ -3,55 +3,18 @@ from __future__ import annotations
 import argparse
 import json
 import shlex
-from itertools import product
 from pathlib import Path
+from itertools import product
 
 
 def slugify(value: str) -> str:
     return "".join(ch.lower() if ch.isalnum() else "-" for ch in value).strip("-")
 
 
-def sbatch_parts(*, job_name: str, gpu_count: int, budget: int | float, slurm: dict[str, object]) -> list[str]:
-    parts = [
-        "sbatch",
-        f"-c {slurm.get('cpus_per_task', 6)}",
-        f"--mem={slurm.get('mem', '20G')}",
-        f"--gres={slurm.get('gres', f'gpu:{gpu_count}')}",
-        f"-p {slurm.get('partition', 'batch_gpu')}",
-        f"-q {slurm.get('qos', '3h')}",
-    ]
-    optional_map = {
-        "job_name": "-J",
-        "output": "-o",
-        "time": "-t",
-        "nodes": "-N",
-        "ntasks": "-n",
-        "account": "-A",
-        "constraint": "-C",
-        "nodelist": "-w",
-        "exclude": "-x",
-    }
-    for key, flag in optional_map.items():
-        value = slurm.get(key)
-        if value:
-            parts.append(f"{flag} {value}")
-    extra_args = slurm.get("extra_args", [])
-    if isinstance(extra_args, str):
-        parts.append(extra_args)
-    else:
-        parts.extend(str(arg) for arg in extra_args)
-    return parts
-
-
 def wrap_command(*, env: dict[str, str], nproc_per_node: int, run_id: str) -> str:
     env_items = [f"RUN_ID={shlex.quote(run_id)}"]
     env_items.extend(f"{key}={shlex.quote(value)}" for key, value in sorted(env.items()) if key != "RUN_ID")
     return " ".join(env_items + [f"torchrun --standalone --nproc_per_node={nproc_per_node} train_gpt.py"])
-
-
-def wrap_arg(command: str) -> str:
-    escaped = command.replace("\\", "\\\\").replace('"', '\\"')
-    return f'--wrap="{escaped}"'
 
 
 def emit_block(
@@ -68,10 +31,9 @@ def emit_block(
 ) -> None:
     slurm = slurm or {}
     point_slug = slugify(point_name or config_path.stem)[:80]
-    job_name = slugify(str(slurm.get("job_name", point_slug)))[:80] or "parameter-golf-h100"
-    run_id = slugify(str(slurm.get("run_id", job_name)))[:100] or "parameter-golf-h100"
-    wrap = wrap_command(env=env, nproc_per_node=8, run_id=run_id)
-    command = " ".join(sbatch_parts(job_name=job_name, gpu_count=8, budget=budget, slurm=slurm) + [wrap_arg(wrap)])
+    run_id = slugify(str(slurm.get("run_id", point_slug)))[:100] or "parameter-golf-h100"
+    command = wrap_command(env=env, nproc_per_node=8, run_id=run_id)
+    setup_cmd = slurm.get("setup_command", "pip install zstandard flash-attn --no-build-isolation")
 
     print("RUN THIS MANUALLY ON H100")
     print(f"config: {config_path.relative_to(root)}")
@@ -79,9 +41,10 @@ def emit_block(
         print(f"matrix_point: {point_name}")
     print(f"purpose: {purpose}")
     print(f"runtime_budget_minutes: {budget}")
+    print(f"setup_command: {setup_cmd}")
     print("command:")
     print(command)
-    print("expected_outputs: slurm-%x-%j.out, logs/<RUN_ID>.txt, final_model.int8.ptz, final roundtrip metrics")
+    print("expected_outputs: logs/<RUN_ID>.txt, final_model.int8.ptz, final roundtrip metrics")
     print(f"risks: {risks}")
     print(f"success_criteria: {success}")
     print()
@@ -133,7 +96,7 @@ def emit_matrix(root: Path, config_path: Path, config: dict[str, object]) -> Non
 
 
 def main() -> None:
-    parser = argparse.ArgumentParser(description="Emit manual-only H100 sbatch --wrap commands")
+    parser = argparse.ArgumentParser(description="Emit manual-only H100 Runpod/SSH commands")
     parser.add_argument("config", help="Path to H100 JSON config")
     args = parser.parse_args()
 
