@@ -214,7 +214,7 @@ def build_sentencepiece_luts(
             base_bytes_np[token_id] = 1
             continue
         piece = sp.id_to_piece(token_id)
-        if piece.startswith("?"):
+        if piece.startswith("▁"):
             has_leading_space_np[token_id] = True
             piece = piece[1:]
         base_bytes_np[token_id] = len(piece.encode("utf-8"))
@@ -305,7 +305,7 @@ def eval_val(
 # -----------------------------
 #
 # It's silly to export our model, which is trained in bf16 and fp32, at that same precision.
-# Instead, we get approximately the same model (with a small hit) by quantizing the model to int8 & zlib compressing.
+# Instead, we get approximately the same model (with a small hit) by quantizing the model to int8 and compressing it.
 # We can then decompress the model and run in higher precision for evaluation, after closing in under the size limit.
 
 CONTROL_TENSOR_NAME_PATTERNS = tuple(
@@ -1403,7 +1403,7 @@ def main() -> None:
     # SERIALIZATION + ROUNDTRIP VALIDATION
     # -----------------------------
     # Save the raw state (useful for debugging/loading in PyTorch directly), then always produce
-    # the compressed int8+zlib artifact and validate the round-tripped weights.
+    # the compressed int8 artifact and validate the round-tripped weights.
 
     if master_process:
         torch.save(base_model.state_dict(), "final_model.pt")
@@ -1435,10 +1435,10 @@ def main() -> None:
         code_bytes = len(code.encode("utf-8"))
         ratio = quant_stats["baseline_tensor_bytes"] / max(quant_stats["int8_payload_bytes"], 1)
         log0(
-            f"Serialized model int8+zlib: {quant_file_bytes} bytes "
+            f"Serialized model int8+{_COMPRESSOR}: {quant_file_bytes} bytes "
             f"(payload:{quant_stats['int8_payload_bytes']} raw_torch:{quant_raw_bytes} payload_ratio:{ratio:.2f}x)"
         )
-        log0(f"Total submission size int8+zlib: {quant_file_bytes + code_bytes} bytes")
+        log0(f"Total submission size int8+{_COMPRESSOR}: {quant_file_bytes + code_bytes} bytes")
 
     if distributed:
         dist.barrier()
@@ -1468,11 +1468,11 @@ def main() -> None:
     )
     torch.cuda.synchronize()
     log0(
-        f"final_int8_zlib_roundtrip val_loss:{q_val_loss:.4f} val_bpb:{q_val_bpb:.4f} "
+        f"final_int8_{_COMPRESSOR}_roundtrip val_loss:{q_val_loss:.4f} val_bpb:{q_val_bpb:.4f} "
         f"eval_time:{1000.0 * (time.perf_counter() - t_qeval):.0f}ms "
         f"eval_seq_len:{effective_eval_seq_len}"
     )
-    log0(f"final_int8_zlib_roundtrip_exact val_loss:{q_val_loss:.8f} val_bpb:{q_val_bpb:.8f}")
+    log0(f"final_int8_{_COMPRESSOR}_roundtrip_exact val_loss:{q_val_loss:.8f} val_bpb:{q_val_bpb:.8f}")
 
     if args.eval_stride > 0:
         torch.cuda.synchronize()

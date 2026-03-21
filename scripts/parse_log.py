@@ -6,11 +6,11 @@ from pathlib import Path
 
 
 FINAL_PRE_RE = re.compile(r"final_pre_export_exact val_loss:(?P<loss>\S+) val_bpb:(?P<bpb>\S+)")
-FINAL_POST_RE = re.compile(r"final_int8_zlib_roundtrip_exact val_loss:(?P<loss>\S+) val_bpb:(?P<bpb>\S+)")
-FINAL_POST_FAST_RE = re.compile(r"final_int8_zlib_roundtrip val_loss:\S+ val_bpb:\S+ eval_time:(?P<eval_ms>\d+)ms")
+FINAL_POST_RE = re.compile(r"final_int8_(?:zlib|zstd)_roundtrip_exact val_loss:(?P<loss>\S+) val_bpb:(?P<bpb>\S+)")
+FINAL_POST_FAST_RE = re.compile(r"final_int8_(?:zlib|zstd)_roundtrip val_loss:\S+ val_bpb:\S+ eval_time:(?P<eval_ms>\d+)ms")
 STOP_RE = re.compile(r"stopping_early: wallclock_cap train_time:(?P<train_ms>\d+)ms step:(?P<step>\d+)/(?P<iters>\d+)")
-SIZE_RE = re.compile(r"Total submission size int8\+zlib: (?P<bytes>\d+) bytes")
-MODEL_SIZE_RE = re.compile(r"Serialized model int8\+zlib: (?P<bytes>\d+) bytes")
+SIZE_RE = re.compile(r"Total submission size int8\+(?:zlib|zstd): (?P<bytes>\d+) bytes")
+MODEL_SIZE_RE = re.compile(r"Serialized model int8\+(?:zlib|zstd): (?P<bytes>\d+) bytes")
 CODE_SIZE_RE = re.compile(r"Code size: (?P<bytes>\d+) bytes")
 TOKENS_RE = re.compile(r"train_tokens_seen:(?P<tokens>\d+)")
 PEAK_MEM_RE = re.compile(r"peak memory allocated: (?P<allocated>\d+) MiB reserved: (?P<reserved>\d+) MiB")

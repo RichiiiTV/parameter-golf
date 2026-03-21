@@ -1,9 +1,9 @@
 {
-  "classification": "YELLOW",
+  "classification": "GREEN",
   "env": {
     "NUM_LAYERS": "12",
     "MLP_HIDDEN": "1408",
-    "BIGRAM_VOCAB_SIZE": "4096",
+    "BIGRAM_VOCAB_SIZE": "3584",
     "BIGRAM_DIM": "128",
     "TRAIN_SEQ_LEN": "2048",
     "TRAIN_BATCH_TOKENS": "458752",
@@ -15,9 +15,9 @@
     "MUON_MOMENTUM_WARMUP_STEPS": "1500",
     "WARMDOWN_ITERS": "3000",
     "GRAD_CLIP_NORM": "0.3",
-    "EVAL_SEQ_LEN": "4096",
+    "EVAL_SEQ_LEN": "2048",
     "EVAL_STRIDE": "64",
-    "EVAL_BATCH_SEQS": "16",
+    "EVAL_BATCH_SEQS": "32",
     "MUON_WD": "0.04",
     "ADAM_WD": "0.04",
     "SWA_ENABLED": "0",
@@ -32,11 +32,11 @@
   },
   "h100_only": true,
   "hardware": "8xH100-SXM",
-  "lane": "h100_root_eval_followup",
-  "notes": "Eval-only follow-up on the combined step-budget plus BigramHash candidate; promote only if the 2048-eval run is healthy.",
-  "profile": "h100-root-pr332-b458k-bigram4096-eval4096",
+  "lane": "h100_root_pr332",
+  "notes": "Historical first cap rescue guess. The metric-fixed A100 rerun came in at 16069767 bytes so this lane is preserved for reference only.",
+  "profile": "h100-root-pr332-b458k-bigram3584",
   "promote": false,
-  "purpose": "Test whether the stronger combined candidate also benefits from longer eval context without violating the eval budget.",
+  "purpose": "Historical first cap rescue guess kept for provenance after the fixed-metric rerun remained over the size cap.",
   "runtime_budget_minutes": 10,
-  "success_criteria": "Stay under the eval budget and improve or materially close on the 2048-eval combined run."
+  "success_criteria": "Historical only. Prefer the 2560-bucket rescue for the next active rerun."
 }
