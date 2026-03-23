@@ -670,7 +670,7 @@ class CausalSelfAttention(nn.Module):
         cos, sin = self.rotary(seqlen, x.device, q.dtype)
         q = apply_rotary_emb(q, cos, sin, partial_dims=self.partial_rope_dims)
         k = apply_rotary_emb(k, cos, sin, partial_dims=self.partial_rope_dims)
-        gain = self.q_gain if q_gain is None else q_gain
+        gain = self.q_gain if q_gain is None else self.q_gain * q_gain
         q = q * gain.to(dtype=q.dtype)[None, :, None, None]
         if _HAS_FLASH_ATTN:
             q_fa = q.transpose(1, 2)
@@ -847,7 +847,7 @@ class GPT(nn.Module):
         resid_mixes = torch.zeros(num_layers, 2, model_dim, dtype=torch.float32)
         resid_mixes[:, 0].fill_(1.0)
         self.resid_mixes = nn.Parameter(resid_mixes)
-        self.q_gains = nn.Parameter(torch.full((num_layers, num_heads), qk_gain_init, dtype=torch.float32)) if per_app_q_gain else None
+        self.q_gains = nn.Parameter(torch.ones(num_layers, num_heads, dtype=torch.float32)) if per_app_q_gain else None
         self.xsa_last_n = xsa_last_n
         partial_rope = int(os.environ.get("PARTIAL_ROPE_DIMS", 0))
         ln_scale_enabled = bool(int(os.environ.get("LN_SCALE", 0)))
