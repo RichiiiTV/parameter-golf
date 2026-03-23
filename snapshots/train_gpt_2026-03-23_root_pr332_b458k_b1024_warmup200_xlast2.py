@@ -3,6 +3,7 @@ The `train_gpt.py` and `train_gpt_mlx.py` scripts are intended as good launching
 
 Hard stop: `train_gpt.py` and `train_gpt_mlx.py` must never be longer than 1500 lines.
 """
+
 from __future__ import annotations
 
 import copy
@@ -38,7 +39,12 @@ try:
 except ImportError:
     _HAS_FLASH_ATTN = False
 
+# -----------------------------
+# HYPERPARAMETERS
+# -----------------------------
+
 class Hyperparameters:
+    # Data paths are shard globs produced by the existing preprocessing pipeline.
     data_path = os.environ.get("DATA_PATH", "./data/datasets/fineweb10B_sp1024")
     train_files = os.path.join(data_path, "fineweb_train_*.bin")
     val_files = os.path.join(data_path, "fineweb_val_*.bin")
@@ -46,10 +52,12 @@ class Hyperparameters:
     run_id = os.environ.get("RUN_ID", str(uuid.uuid4()))
     seed = int(os.environ.get("SEED", 1337))
 
+    # Validation cadence and batch size. Validation always uses the full fineweb_val split.
     val_batch_size = int(os.environ.get("VAL_BATCH_SIZE", 524_288))
     val_loss_every = int(os.environ.get("VAL_LOSS_EVERY", 1000))
     train_log_every = int(os.environ.get("TRAIN_LOG_EVERY", 200))
 
+    # Training length.
     iterations = int(os.environ.get("ITERATIONS", 20000))
     warmdown_iters = int(os.environ.get("WARMDOWN_ITERS", 1200))
     warmup_steps = int(os.environ.get("WARMUP_STEPS", 20))
@@ -61,9 +69,9 @@ class Hyperparameters:
     max_wallclock_seconds = float(os.environ.get("MAX_WALLCLOCK_SECONDS", 600.0))
     qk_gain_init = float(os.environ.get("QK_GAIN_INIT", 1.5))
 
+    # Model shape.
     vocab_size = int(os.environ.get("VOCAB_SIZE", 1024))
     num_layers = int(os.environ.get("NUM_LAYERS", 9))
-    unique_blocks = int(os.environ.get("UNIQUE_BLOCKS", 0))
     num_kv_heads = int(os.environ.get("NUM_KV_HEADS", 4))
     model_dim = int(os.environ.get("MODEL_DIM", 512))
     num_heads = int(os.environ.get("NUM_HEADS", 8))
@@ -75,6 +83,7 @@ class Hyperparameters:
     bigram_vocab_size = int(os.environ.get("BIGRAM_VOCAB_SIZE", 2048))
     bigram_dim = int(os.environ.get("BIGRAM_DIM", 128))
 
+    # Optimizer hyperparameters.
     embed_lr = float(os.environ.get("EMBED_LR", 0.6))
     head_lr = float(os.environ.get("HEAD_LR", 0.008))
     tied_embed_lr = float(os.environ.get("TIED_EMBED_LR", 0.05))
@@ -92,14 +101,20 @@ class Hyperparameters:
     adam_weight_decay = float(os.environ.get("ADAM_WD", 0.0))
     grad_clip_norm = float(os.environ.get("GRAD_CLIP_NORM", 0.0))
 
+    # XSA (Exclusive Self Attention) and EMA
     xsa_last_n = int(os.environ.get("XSA_LAST_N", 0))  # Apply XSA to last N layers (0=disabled)
     ema_enabled = bool(int(os.environ.get("EMA_ENABLED", 0)))
     ema_decay = float(os.environ.get("EMA_DECAY", 0.997))
     swa_enabled = bool(int(os.environ.get("SWA_ENABLED", 1)))
 
+    # Novel techniques
     partial_rope_dims = int(os.environ.get("PARTIAL_ROPE_DIMS", 0))  # 0=full RoPE, 16=partial
     ln_scale = bool(int(os.environ.get("LN_SCALE", 0)))  # Scale RMSNorm by 1/sqrt(layer+1)
     late_qat = bool(int(os.environ.get("LATE_QAT", 0)))  # Enable int6 STE in last 4% of training
+
+# -----------------------------
+# MUON OPTIMIZER 
+# -----------------------------
 
 def zeropower_via_newtonschulz5(G: Tensor, steps: int = 10, eps: float = 1e-7) -> Tensor:
     # Orthogonalize a 2D update matrix with a fast Newton-Schulz iteration.
@@ -659,8 +674,9 @@ class CausalSelfAttention(nn.Module):
         proj = (y_g * vn).sum(dim=-1, keepdim=True) * vn
         return (y_g - proj).reshape(B, T, H, D)
 
-    def forward(self, x: Tensor, use_xsa: bool | None = None) -> Tensor:
+    def forward(self, x: Tensor) -> Tensor:
         bsz, seqlen, dim = x.shape
+        # All shapes: (B, H, S, D) for rotary + q_gain, then transpose for flash_attn
         q = self.c_q(x).reshape(bsz, seqlen, self.num_heads, self.head_dim).transpose(1, 2)
         k = self.c_k(x).reshape(bsz, seqlen, self.num_kv_heads, self.head_dim).transpose(1, 2)
         v = self.c_v(x).reshape(bsz, seqlen, self.num_kv_heads, self.head_dim).transpose(1, 2)
@@ -671,6 +687,7 @@ class CausalSelfAttention(nn.Module):
         k = apply_rotary_emb(k, cos, sin, partial_dims=self.partial_rope_dims)
         q = q * self.q_gain.to(dtype=q.dtype)[None, :, None, None]
         if _HAS_FLASH_ATTN:
+            # flash_attn needs (B, S, H, D)
             q_fa = q.transpose(1, 2)
             k_fa = k.transpose(1, 2)
             v_fa = v.transpose(1, 2)
@@ -683,9 +700,7 @@ class CausalSelfAttention(nn.Module):
                 enable_gqa=(self.num_kv_heads != self.num_heads),
             )
             y = y.transpose(1, 2)  # (B, H, S, D) -> (B, S, H, D)
-        if use_xsa is None:
-            use_xsa = self.use_xsa
-        if use_xsa:
+        if self.use_xsa:
             v_bshd = v.transpose(1, 2)  # XSA needs (B, S, Hkv, D)
             y = self._xsa_efficient(y, v_bshd)
         y = y.reshape(bsz, seqlen, dim)
@@ -760,23 +775,20 @@ class Block(nn.Module):
         self.mlp_norm = RMSNorm()
         self.attn = CausalSelfAttention(dim, num_heads, num_kv_heads, rope_base, qk_gain_init)
         self.mlp = MLP(dim, mlp_mult, mlp_hidden)
+        self.attn_scale = nn.Parameter(torch.ones(dim, dtype=torch.float32))
+        self.mlp_scale = nn.Parameter(torch.ones(dim, dtype=torch.float32))
+        self.resid_mix = nn.Parameter(torch.stack((torch.ones(dim), torch.zeros(dim))).float())
+        self.ln_scale_factor = 1.0  # Set externally for LN Scale
 
-    def forward(
-        self,
-        x: Tensor,
-        x0: Tensor,
-        resid_mix: Tensor,
-        attn_scale: Tensor,
-        mlp_scale: Tensor,
-        ln_scale_factor: float,
-        use_xsa: bool = False,
-    ) -> Tensor:
-        mix = resid_mix.to(dtype=x.dtype)
+    def forward(self, x: Tensor, x0: Tensor) -> Tensor:
+        mix = self.resid_mix.to(dtype=x.dtype)
         x = mix[0][None, None, :] * x + mix[1][None, None, :] * x0
-        attn_out = self.attn(self.attn_norm(x) * ln_scale_factor, use_xsa=use_xsa)
-        x = x + attn_scale.to(dtype=x.dtype)[None, None, :] * attn_out
-        x = x + mlp_scale.to(dtype=x.dtype)[None, None, :] * self.mlp(self.mlp_norm(x) * ln_scale_factor)
+        s = self.ln_scale_factor
+        attn_out = self.attn(self.attn_norm(x) * s)
+        x = x + self.attn_scale.to(dtype=x.dtype)[None, None, :] * attn_out
+        x = x + self.mlp_scale.to(dtype=x.dtype)[None, None, :] * self.mlp(self.mlp_norm(x) * s)
         return x
+
 
 class GPT(nn.Module):
     def __init__(
@@ -796,7 +808,6 @@ class GPT(nn.Module):
         bigram_vocab_size: int = 0,
         bigram_dim: int = 128,
         xsa_last_n: int = 0,
-        unique_blocks: int = 0,
     ):
         super().__init__()
         if logit_softcap <= 0.0:
@@ -807,21 +818,11 @@ class GPT(nn.Module):
         self.tok_emb = nn.Embedding(vocab_size, model_dim)
         self.bigram = BigramHashEmbedding(bigram_vocab_size, bigram_dim, model_dim) if bigram_vocab_size > 0 else None
         self.smear = SmearGate(model_dim)
-        self.num_block_apps = num_layers
         self.num_encoder_layers = num_layers // 2
         self.num_decoder_layers = num_layers - self.num_encoder_layers
         self.num_skip_weights = min(self.num_encoder_layers, self.num_decoder_layers)
         self.skip_weights = nn.Parameter(torch.ones(self.num_skip_weights, model_dim, dtype=torch.float32))
-        if unique_blocks in (0, num_layers):
-            self.block_schedule_enc = list(range(self.num_encoder_layers))
-            self.block_schedule_dec = list(range(self.num_encoder_layers, num_layers))
-            unique_blocks = num_layers
-        elif unique_blocks == 8 and num_layers == 12:
-            self.block_schedule_enc = [0, 1, 2, 3, 2, 3]
-            self.block_schedule_dec = [4, 5, 6, 7, 6, 7]
-        else:
-            raise ValueError(f"UNIQUE_BLOCKS must be 0, {num_layers}, or 8 when NUM_LAYERS=12, got {unique_blocks}")
-        self.shared_blocks = nn.ModuleList(
+        self.blocks = nn.ModuleList(
             [
                 Block(
                     model_dim,
@@ -832,22 +833,20 @@ class GPT(nn.Module):
                     qk_gain_init,
                     mlp_hidden=mlp_hidden,
                 )
-                for _ in range(unique_blocks)
+                for i in range(num_layers)
             ]
         )
-        self.attn_scales = nn.Parameter(torch.ones(num_layers, model_dim, dtype=torch.float32))
-        self.mlp_scales = nn.Parameter(torch.ones(num_layers, model_dim, dtype=torch.float32))
-        resid_mixes = torch.zeros(num_layers, 2, model_dim, dtype=torch.float32)
-        resid_mixes[:, 0].fill_(1.0)
-        self.resid_mixes = nn.Parameter(resid_mixes)
-        self.xsa_last_n = xsa_last_n
+        # Enable XSA on last N layers + Partial RoPE + LN Scale
         partial_rope = int(os.environ.get("PARTIAL_ROPE_DIMS", 0))
         ln_scale_enabled = bool(int(os.environ.get("LN_SCALE", 0)))
-        for block in self.shared_blocks:
+        for i in range(num_layers):
+            if xsa_last_n > 0 and i >= num_layers - xsa_last_n:
+                self.blocks[i].attn.use_xsa = True
             if partial_rope > 0:
-                block.attn.partial_rope_dims = partial_rope
-                block.attn.rotary = Rotary(partial_rope, base=rope_base, train_seq_len=1024)
-        self.ln_scale_factors = [1.0 / math.sqrt(i + 1) if ln_scale_enabled else 1.0 for i in range(num_layers)]
+                self.blocks[i].attn.partial_rope_dims = partial_rope
+                self.blocks[i].attn.rotary = Rotary(partial_rope, base=rope_base, train_seq_len=1024)
+            if ln_scale_enabled:
+                self.blocks[i].ln_scale_factor = 1.0 / math.sqrt(i + 1)
         self.final_norm = RMSNorm()
         self.lm_head = None if tie_embeddings else CastedLinear(model_dim, vocab_size, bias=False)
         if self.lm_head is not None:
@@ -857,7 +856,7 @@ class GPT(nn.Module):
     def _init_weights(self) -> None:
         if self.tie_embeddings:
             nn.init.normal_(self.tok_emb.weight, mean=0.0, std=self.tied_embed_init_std)
-        num_layers = self.num_block_apps
+        num_layers = len(self.blocks)
         for name, module in self.named_modules():
             if isinstance(module, nn.Linear):
                 if getattr(module, "_zero_init", False):
@@ -868,30 +867,24 @@ class GPT(nn.Module):
                         with torch.no_grad():
                             module.weight.mul_(1.0 / math.sqrt(2 * num_layers))
 
-    def _run_block(self, block_idx: int, app_idx: int, x: Tensor, x0: Tensor) -> Tensor:
-        return self.shared_blocks[block_idx](
-            x, x0, self.resid_mixes[app_idx], self.attn_scales[app_idx], self.mlp_scales[app_idx],
-            self.ln_scale_factors[app_idx], use_xsa=self.xsa_last_n > 0 and app_idx >= self.num_block_apps - self.xsa_last_n
-        )
-
-    def _run_layers(self, x: Tensor, x0: Tensor) -> Tensor:
-        skips: list[Tensor] = []
-        for app_idx, block_idx in enumerate(self.block_schedule_enc):
-            x = self._run_block(block_idx, app_idx, x, x0)
-            skips.append(x)
-        for i, block_idx in enumerate(self.block_schedule_dec):
-            if skips:
-                x = x + self.skip_weights[i].to(dtype=x.dtype)[None, None, :] * skips.pop()
-            x = self._run_block(block_idx, self.num_encoder_layers + i, x, x0)
-        return x
-
     def forward(self, input_ids: Tensor, target_ids: Tensor) -> Tensor:
         x = self.tok_emb(input_ids)
         if self.bigram is not None:
             x = x + self.bigram(input_ids)
         x = F.rms_norm(x, (x.size(-1),))
         x = self.smear(x)
-        x = self._run_layers(x, x)
+        x0 = x
+        skips: list[Tensor] = []
+
+        # First half stores skips; second half reuses them in reverse order.
+        for i in range(self.num_encoder_layers):
+            x = self.blocks[i](x, x0)
+            skips.append(x)
+        for i in range(self.num_decoder_layers):
+            if skips:
+                x = x + self.skip_weights[i].to(dtype=x.dtype)[None, None, :] * skips.pop()
+            x = self.blocks[self.num_encoder_layers + i](x, x0)
+
         x = self.final_norm(x).reshape(-1, x.size(-1))
         targets = target_ids.reshape(-1)
         if self.tie_embeddings:
@@ -910,13 +903,22 @@ class GPT(nn.Module):
             x = x + self.bigram(input_ids)
         x = F.rms_norm(x, (x.size(-1),))
         x = self.smear(x)
-        x = self._run_layers(x, x)
+        x0 = x
+        skips: list[Tensor] = []
+        for i in range(self.num_encoder_layers):
+            x = self.blocks[i](x, x0)
+            skips.append(x)
+        for i in range(self.num_decoder_layers):
+            if skips:
+                x = x + self.skip_weights[i].to(dtype=x.dtype)[None, None, :] * skips.pop()
+            x = self.blocks[self.num_encoder_layers + i](x, x0)
         x = self.final_norm(x)
         if self.tie_embeddings:
             logits_proj = F.linear(x, self.tok_emb.weight)
         else:
             logits_proj = self.lm_head(x)
         return self.logit_softcap * torch.tanh(logits_proj / self.logit_softcap)
+
 
 def eval_val_sliding(
     args, base_model: nn.Module, rank: int, world_size: int, device: torch.device,
@@ -1104,7 +1106,6 @@ def main() -> None:
         bigram_vocab_size=args.bigram_vocab_size,
         bigram_dim=args.bigram_dim,
         xsa_last_n=args.xsa_last_n,
-        unique_blocks=args.unique_blocks,
     ).to(device).bfloat16()
     for module in base_model.modules():
         if isinstance(module, CastedLinear):
@@ -1118,7 +1119,7 @@ def main() -> None:
     # - untied lm_head (Adam) uses HEAD_LR
     # - matrix params in transformer blocks use MATRIX_LR via Muon
     # - vectors/scalars use SCALAR_LR via Adam
-    block_named_params = list(base_model.shared_blocks.named_parameters())
+    block_named_params = list(base_model.blocks.named_parameters())
     matrix_params = [
         p
         for name, p in block_named_params
@@ -1129,7 +1130,6 @@ def main() -> None:
         for name, p in block_named_params
         if p.ndim < 2 or any(pattern in name for pattern in CONTROL_TENSOR_NAME_PATTERNS)
     ]
-    scalar_params.extend([base_model.attn_scales, base_model.mlp_scales, base_model.resid_mixes])
     if base_model.skip_weights.numel() > 0:
         scalar_params.append(base_model.skip_weights)
     # SmearGate and BigramHash params go through Adam at scalar_lr
@@ -1179,7 +1179,7 @@ def main() -> None:
     log0("sdp_backends:cudnn=False flash=True mem_efficient=False math=False")
     log0(f"attention_mode:gqa num_heads:{args.num_heads} num_kv_heads:{args.num_kv_heads}")
     log0(
-        f"tie_embeddings:{args.tie_embeddings} unique_blocks:{args.unique_blocks or args.num_layers} embed_lr:{token_lr} "
+        f"tie_embeddings:{args.tie_embeddings} embed_lr:{token_lr} "
         f"head_lr:{args.head_lr if base_model.lm_head is not None else 0.0} "
         f"matrix_lr:{args.matrix_lr} scalar_lr:{args.scalar_lr}"
     )

@@ -11,10 +11,10 @@ def slugify(value: str) -> str:
     return "".join(ch.lower() if ch.isalnum() else "-" for ch in value).strip("-")
 
 
-def wrap_command(*, env: dict[str, str], nproc_per_node: int, run_id: str) -> str:
+def wrap_command(*, env: dict[str, str], nproc_per_node: int, run_id: str, script: str) -> str:
     env_items = [f"RUN_ID={shlex.quote(run_id)}"]
     env_items.extend(f"{key}={shlex.quote(value)}" for key, value in sorted(env.items()) if key != "RUN_ID")
-    return " ".join(env_items + [f"torchrun --standalone --nproc_per_node={nproc_per_node} train_gpt.py"])
+    return " ".join(env_items + [f"torchrun --standalone --nproc_per_node={nproc_per_node} {script}"])
 
 
 def emit_block(
@@ -32,7 +32,7 @@ def emit_block(
     slurm = slurm or {}
     point_slug = slugify(point_name or config_path.stem)[:80]
     run_id = slugify(str(slurm.get("run_id", point_slug)))[:100] or "parameter-golf-h100"
-    command = wrap_command(env=env, nproc_per_node=8, run_id=run_id)
+    command = wrap_command(env=env, nproc_per_node=8, run_id=run_id, script=str(slurm.get("script", "train_gpt.py")))
     setup_cmd = slurm.get("setup_command", "pip install zstandard flash-attn --no-build-isolation")
 
     print("RUN THIS MANUALLY ON H100")

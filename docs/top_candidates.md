@@ -5,40 +5,36 @@
 - The merged upstream README still shows the March 20 winner at `1.1428`, so the root port is intentionally targeting the ahead-of-README PR frontier.
 
 ## Active Root Mainline
-- root `train_gpt.py` is now a near-verbatim `#332` port.
-- Exact baseline config: `configs/h100/root_pr332_repro.json`
-- Main improvement config: `configs/h100/root_pr332_b458k_bigram2560.json`
-- Fallback config: `configs/h100/root_pr332_b458k_bigram2432.json`
-- Eval-only follow-up: `configs/h100/root_pr332_b458k_bigram2560_eval4096.json`
-- The newest fixed-metric `8xA100` rerun in `logs/root-pr332-b458k-bigram3584 (2).txt` is plausible but still not submission-safe because it is over cap at `16,069,767` bytes and is not `8xH100` truth.
+- Frozen dense fallback: `snapshots/train_gpt_2026-03-23_root_pr332_b458k_b1024_warmup200_xlast2.py`
+- Frozen dense baseline config: `configs/h100/root_snapshot_b1024_warmup200_xlast2.json`
+- New primary root lane: `configs/h100/root_shared8_mlp1664_b1024_warmup200_xlast2.json`
+- Eval-only follow-up: `configs/h100/root_shared8_mlp1664_b1024_warmup200_xlast2_eval4096.json`
 
 ## Main Prediction
-- Prediction: `#332 + TRAIN_BATCH_TOKENS=458752 + ITERATIONS=11000 + BIGRAM_VOCAB_SIZE=2560` is the safest next compliant rescue of the strong fixed-metric `b458k` lane.
-- This is an inference, not a measured claim.
+- The dense local lane has saturated around the low `1.160x` sliding band on `8xA100`.
+- The next meaningful gain is more likely to come from effective depth-per-byte than from more warmup, BigramHash, or schedule micro-tuning.
+- The first shared lane should therefore keep 12 applications, store only 8 unique full blocks, and spend the saved bytes on `MLP_HIDDEN=1664`.
 
 ## Why This Delta
-- `#332` reports `15,652,352` bytes, leaving `347,648` bytes of cap headroom under `16,000,000`.
-- The newest fixed-metric `3584` rerun came in at `16,069,767` total bytes with a compressed model size of `16,004,657`, so the active problem is a `69,767`-byte overage in the model blob rather than code size.
-- At the current ratio `16,004,657 / 28,057,988 ~= 0.5704`, each BigramHash row is worth about `130 * 0.5704 ~= 74.2` compressed bytes, using `128` quantized bytes plus `2` bytes of per-row scale as the raw estimate.
-- `3584 -> 2560` removes `1024` rows and is the first clean trim that should save about `75,933` compressed bytes at the current ratio.
-- `3584 -> 2432` is the fallback if `2560` lands under cap with too little margin; it should save about `85,425` compressed bytes at the current ratio.
-- A nearby accepted record already showed that more BigramHash capacity helped: `8192 -> 10240` improved by `0.0008 bpb` in `records/track_10min_16mb/2026-03-20_10L_Int5MLP_MuonWD04_SWA50/README.md`.
-- `#332` also explicitly argues that moving from `786432` to `524288` batch tokens improved quality because it bought about 22% more optimization steps in the same budget.
-- A further reduction from `524288` to `458752` is a conservative 12.5% step-cost cut. If step time scaled roughly with tokens, `74 ms -> ~64.75 ms`, which implies roughly `9260` train steps in 600 seconds instead of `~8054`.
-- Because of that, `ITERATIONS` must be raised above `9000`; otherwise the run risks hitting the static iteration ceiling before the wallclock limit.
+- Parameter sharing attacks the real bottleneck in this benchmark: stored bytes under a hard artifact cap.
+- The shared lane keeps the successful dense recipe fixed:
+  - `SHUFFLE_DATA=1`
+  - `WARMUP_STEPS=200`
+  - `BIGRAM_VOCAB_SIZE=1024`
+  - `XSA_LAST_N=2`
+  - `EVAL_STRIDE=64`
+- The new root change is deliberately narrow:
+  - `UNIQUE_BLOCKS=8` over 12 applications
+  - `MLP_HIDDEN=1664`
+  - no MoE, no activation change, no new quantization path
 
 ## Immediate Ladder
-- Run 1: rerun the exact `TRAIN_BATCH_TOKENS=458752`, `ITERATIONS=11000`, `BIGRAM_VOCAB_SIZE=2560` branch with the fixed metric code
-- Run 2: use `BIGRAM_VOCAB_SIZE=2432` only if Run 1 is still over cap or lands under cap with too little margin
-- Run 3: Run 1 plus `EVAL_SEQ_LEN=4096 EVAL_BATCH_SEQS=16` only if Run 1 stays inside the eval budget and lands comfortably under cap
+- Run 1: frozen dense snapshot on H100
+- Run 2: shared-depth root lane with `UNIQUE_BLOCKS=8` and `MLP_HIDDEN=1664`
+- Run 3: `EVAL_SEQ_LEN=4096 EVAL_BATCH_SEQS=16` only on the winner of Runs 1-2
 
 ## Ranking Policy
-- Rank by lower post-export `val_bpb`
+- Rank by lower sliding-window `val_bpb`
+- Require exact roundtrip to stay in-family and non-regressive
 - Require `bytes_total < 16,000,000`
 - Break close ties by higher train tokens processed under the same 600-second budget
-
-## Deferred Ideas
-- `EVAL_SEQ_LEN=4096` is a run-level follow-up, not the primary code delta
-- Recurrent/shared-width transformers remain YELLOW
-- Sparse high-precision outlier retention remains YELLOW
-- Triton remains blocked until a winning post-`#332` GREEN lane exists

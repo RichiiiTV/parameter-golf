@@ -5,7 +5,7 @@
 - Source of truth for accepted records is the official `README.md` plus accepted `records/`.
 - Operational SOTA source of truth for this pass is local `pr332`, specifically `records/track_10min_16mb/2026-03-21_12L_GradQuant_PartialRoPE_EMA`, which reports `val_bpb=1.1320`.
 - The merged upstream `README.md` still shows the March 20 winner at `1.1428`, so root work in this pass is intentionally targeting the ahead-of-README PR frontier.
-- Active work is H100-only, manual-only, and throughput-first.
+- Active work is H100-only, manual-only, and split between a frozen dense snapshot fallback and a shared-depth root lane.
 
 # Hard constraints
 - Never auto-run H100 jobs.
@@ -27,8 +27,8 @@
 - `flash-attn` is optional in code and recommended in the H100 environment, not a mandatory repo dependency.
 
 # GREEN / YELLOW / RED idea board
-- `GREEN`: gradient-guided adaptive quantization, 12 layers, `MLP_HIDDEN=1408`, `BIGRAM_VOCAB_SIZE=2048`, `BIGRAM_DIM=128`, `TRAIN_SEQ_LEN=2048`, `TRAIN_BATCH_TOKENS=524288`, `PARTIAL_ROPE_DIMS=16`, `LN_SCALE=1`, `XSA_LAST_N=4`, `EMA_ENABLED=1`, sliding eval at `stride=64`, bigger BigramHash table if it fits measured byte headroom.
-- `YELLOW`: `EVAL_SEQ_LEN=4096` follow-up, recurrent/shared-width transformers, sparse high-precision outlier retention, tokenizer changes, eval-time adaptation, custom Triton kernels.
+- `GREEN`: frozen dense snapshot `b1024-warmup200-xlast2`, shared-depth root lane with `UNIQUE_BLOCKS=8` and `MLP_HIDDEN=1664`, gradient-guided adaptive quantization, `PARTIAL_ROPE_DIMS=16`, `LN_SCALE=1`, `EMA_ENABLED=1`, sliding eval at `stride=64`.
+- `YELLOW`: `EVAL_SEQ_LEN=4096` follow-up, more aggressive shared-depth schedules, sparse high-precision outlier retention, tokenizer changes, eval-time adaptation, custom Triton kernels.
 - `RED`: auto-launched H100 jobs, over-budget train/eval, network/data access during eval, oversized artifact, seed brute force.
 
 # Roles and ownership
@@ -65,56 +65,40 @@
 - `result.json`
 
 # Current hypotheses
-- Root `train_gpt.py` should be an exact `#332` port first, not another March 20 derivative.
-- The strongest first improvement is the cap-safe combined throughput-and-capacity branch: `TRAIN_BATCH_TOKENS=458752`, `ITERATIONS=11000`, and `BIGRAM_VOCAB_SIZE=2560`.
-- The batch reduction is meant to buy more optimization steps inside 600 seconds; the higher iteration cap keeps that gain from being clipped by the static `9000` iteration ceiling.
-- The bigger BigramHash table spends measured artifact headroom at near-zero training-step cost.
-- The next follow-up should be an eval-only context increase to `EVAL_SEQ_LEN=4096` only if the combined branch stays within the eval budget and lands comfortably under cap.
-- The reported `0.88618079` on `8xA100` is invalid for compliance and ranking decisions because it predates the root metric repair.
+- The frozen dense snapshot is the current fallback H100 candidate and must remain runnable by path.
+- The next root lane should buy more effective depth-per-byte with `UNIQUE_BLOCKS=8` over 12 applications, not more BigramHash tuning.
+- The first funded capacity increase in the shared lane should be `MLP_HIDDEN=1664` while keeping the best dense training recipe otherwise fixed.
+- Sliding-window `val_bpb` is the first promotion metric; exact roundtrip remains the guardrail.
 
 # Current blockers
-- No H100 truth run has been executed from the root `#332` port yet.
-- No H100 truth run has been executed from the combined `b458k + BIGRAM_VOCAB_SIZE=2560` root variant yet.
-- No H100 truth run has been executed from the `BIGRAM_VOCAB_SIZE=2432` fallback rescue.
-- The eval-only `EVAL_SEQ_LEN=4096` follow-up is budget-gated and should not be promoted before the 2560-bucket rescue is healthy.
-- The latest fixed-metric `8xA100` rerun of the 3584-bucket branch is still over cap at `16,069,767` bytes even though its exact metric now looks plausible.
-- The root metric path was corrupted by the wrong SentencePiece leading-space marker instead of the true `U+2581` marker, so the pre-fix A100 `0.88618079` result is not trustworthy.
+- No H100 truth run has been executed from the frozen dense snapshot lane.
+- No H100 truth run has been executed from the shared-depth root lane.
+- The shared-depth lane must fit under the root line budget without moving record-critical logic out of `train_gpt.py`.
 
 # Current best candidates
-- root `train_gpt.py` exact `#332` reproduction
-- root `train_gpt.py` with `TRAIN_BATCH_TOKENS=458752`, `ITERATIONS=11000`, `BIGRAM_VOCAB_SIZE=2560`
-- root `train_gpt.py` with `TRAIN_BATCH_TOKENS=458752`, `ITERATIONS=11000`, `BIGRAM_VOCAB_SIZE=2432` as the cap-margin fallback
-- root `train_gpt.py` with `TRAIN_BATCH_TOKENS=458752`, `ITERATIONS=11000`, `BIGRAM_VOCAB_SIZE=2560`, `EVAL_SEQ_LEN=4096`, `EVAL_BATCH_SEQS=16`
+- frozen snapshot `snapshots/train_gpt_2026-03-23_root_pr332_b458k_b1024_warmup200_xlast2.py`
+- root `train_gpt.py` with `UNIQUE_BLOCKS=8`, `MLP_HIDDEN=1664`, `TRAIN_BATCH_TOKENS=458752`, `BIGRAM_VOCAB_SIZE=1024`, `WARMUP_STEPS=200`, `SHUFFLE_DATA=1`, `XSA_LAST_N=2`
 
 # Next 10 experiments
-- Run 1: rerun root `#332` with `TRAIN_BATCH_TOKENS=458752`, `ITERATIONS=11000`, and `BIGRAM_VOCAB_SIZE=2560`
-- Run 2: rerun the same branch with `BIGRAM_VOCAB_SIZE=2432` only if Run 1 is still over cap or lands under cap with too little margin
-- Run 3: Run 1 plus `EVAL_SEQ_LEN=4096 EVAL_BATCH_SEQS=16` if Run 1 stays within eval budget and lands comfortably under cap
-- Run 4: three-seed sweep at `SEED=1337` on the winning root `#332` or cap-rescued BigramHash setting
-- Run 5: three-seed sweep at `SEED=1338` on the winning root `#332` or cap-rescued BigramHash setting
-- Run 6: three-seed sweep at `SEED=1339` on the winning root `#332` or cap-rescued BigramHash setting
-- Run 7: exact March 20 accepted top record only if the root `#332` port diverges materially
-- Run 8: bigger BigramHash follow-up beyond `4096` only if bytes leave further headroom
-- Run 9: YELLOW `EVAL_SEQ_LEN=4096` promotion only after a healthy `BIGRAM_VOCAB_SIZE=2560` run
-- Run 10: recurrent/shared-width or sparse-outlier follow-up only after a winning GREEN root lane exists
+- Run 1: frozen dense snapshot on H100 for truth baseline
+- Run 2: shared-depth root lane with `UNIQUE_BLOCKS=8` and `MLP_HIDDEN=1664`
+- Run 3: eval-only `EVAL_SEQ_LEN=4096 EVAL_BATCH_SEQS=16` on the winner of Runs 1-2 if it stays in budget
+- Run 4: adjust shared lane width upward only if Run 2 wins and leaves byte headroom
+- Run 5: adjust shared lane width downward only if Run 2 wins on quality but misses the byte cap
+- Run 6: three-seed sweep at `SEED=1337` on the winning dense or shared lane
+- Run 7: three-seed sweep at `SEED=1338` on the winning dense or shared lane
+- Run 8: three-seed sweep at `SEED=1339` on the winning dense or shared lane
+- Run 9: more aggressive shared-depth schedule only after an `UNIQUE_BLOCKS=8` truth run
+- Run 10: sparse-outlier or other YELLOW follow-up only after a winning GREEN shared or dense lane exists
 
 # Decision log
-- Port root `train_gpt.py` from local `pr332:records/track_10min_16mb/2026-03-21_12L_GradQuant_PartialRoPE_EMA/train_gpt.py`.
-- Keep the root port semantically identical to `#332`; only trim comments/blank lines for the line cap.
-- Keep root default `BIGRAM_VOCAB_SIZE=2048`; express the larger-table upgrades in configs, not by silently changing the donor baseline.
-- Promote a smaller-batch branch as the main improvement because `#332` itself attributes part of its gain to more optimization steps from a reduced batch.
-- Use `TRAIN_BATCH_TOKENS=458752` because it is a conservative 12.5% reduction from `524288` that preserves clean geometry at `TRAIN_SEQ_LEN=2048`.
-- Raise `ITERATIONS` to `11000` on that branch so the run stays wallclock-limited instead of clipping against the donor `9000`-iteration ceiling.
-- After the fixed-metric `3584` rerun came in at `16,069,767` total bytes and `1.18226244` exact `val_bpb`, move the active rescue to `BIGRAM_VOCAB_SIZE=2560`.
-- At the current ratio `16,004,657 / 28,057,988 ~= 0.5704`, each BigramHash row is worth about `130 * 0.5704 ~= 74.2` compressed bytes.
-- `3584 -> 2560` removes `1024` rows and should save about `75,933` compressed bytes at the current ratio.
-- Keep `BIGRAM_VOCAB_SIZE=2432` as the fallback because it should buy about `85,425` compressed bytes and therefore stronger cap margin.
-- Defer `EVAL_SEQ_LEN=4096` to a run-level follow-up because it is eval-budget-gated.
-- Keep `flash-attn` optional in code.
-- Keep Triton blocked until a winning post-`#332` GREEN lane exists and a standard-backend bottleneck is measured on H100.
-- Restore the correct SentencePiece leading-space marker in root metric code: `U+2581`, not `"?"`.
-- Treat `logs/root-pr332-b458k-bigram3584.txt` as pre-fix debugging evidence only.
-- Treat the newest verified section of `logs/root-pr332-b458k-bigram3584 (2).txt` as the current planning anchor: plausible metric path but still over cap and not H100 truth.
+- Freeze the dense `b1024-warmup200-xlast2` root lane into `snapshots/` before changing root again.
+- Keep the dense snapshot runnable by path for later H100 comparison.
+- Implement shared depth with a unique-block table plus application schedule, not repeated module aliases in one `ModuleList`.
+- Keep per-application `attn_scale`, `mlp_scale`, `resid_mix`, and LN-depth behavior unique; keep `q_gain` shared inside shared attention blocks in v1.
+- Use `UNIQUE_BLOCKS=8` only when `NUM_LAYERS=12`; reject other nontrivial sharing schedules in this pass.
+- Spend the saved bytes on `MLP_HIDDEN=1664` first, not more BigramHash capacity.
+- Keep `flash-attn` optional in code and Triton blocked.
 
 # Rules for modifying code
 - Keep record-critical logic in `train_gpt.py`.
