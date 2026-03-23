@@ -835,7 +835,6 @@ class GPT(nn.Module):
         x = self.final_norm(x).reshape(-1, x.size(-1))
         targets = target_ids.reshape(-1)
         return F.cross_entropy(self._project_logits(x).float(), targets, reduction="mean")
-    @torch.no_grad()
     def get_logits(self, input_ids: Tensor) -> Tensor:
         x = self.tok_emb(input_ids)
         if self.bigram is not None:
