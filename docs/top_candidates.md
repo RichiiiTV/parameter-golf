@@ -10,6 +10,7 @@
 - New primary root lane: `configs/h100/root_shared8_mlp1664_b1024_warmup200_xlast2.json`
 - New less-aggressive sharing lane: `configs/h100/root_shared10_mlp1920_b4096_warmup200_xlast2.json`
 - Yellow adapter lane: `configs/h100/root_shared10_mlp1920_b4096_warmup200_xlast2_qgain.json`
+- Yellow export lane: `configs/h100/root_shared10_mlp1920_b4096_warmup200_xlast2_qgain_outliers64.json`
 - Eval-only follow-up: `configs/h100/root_shared8_mlp1664_b1024_warmup200_xlast2_eval4096.json`
 
 ## Main Prediction
@@ -33,12 +34,16 @@
 - The first yellow follow-up is even narrower:
   - `PER_APP_Q_GAIN=1`
   - no other architectural or export change
+- The next yellow follow-up is exporter-only:
+  - `OUTLIER_ROW_BUDGET=64`
+  - rescue a tiny set of high-residual rows in higher precision after quantization
 
 ## Immediate Ladder
 - Run 1: frozen dense snapshot on H100
 - Run 2: shared-depth root lane with `UNIQUE_BLOCKS=10`, `MLP_HIDDEN=1920`, and `BIGRAM_VOCAB_SIZE=4096`
 - Run 3: yellow shared-depth adapter lane with `PER_APP_Q_GAIN=1` on top of Run 2
-- Run 4: `EVAL_SEQ_LEN=4096 EVAL_BATCH_SEQS=16` only on the winner of Runs 1-3
+- Run 4: yellow export lane with `OUTLIER_ROW_BUDGET=64` on top of Run 3
+- Run 5: `EVAL_SEQ_LEN=4096 EVAL_BATCH_SEQS=16` only on the winner of Runs 1-4
 
 ## Ranking Policy
 - Rank by lower sliding-window `val_bpb`

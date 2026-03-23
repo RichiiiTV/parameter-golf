@@ -9,6 +9,7 @@ Operational frontier for this pass:
 - Run 2: shared-depth root lane with `UNIQUE_BLOCKS=8`, `MLP_HIDDEN=1664`, and the same best dense training recipe
 - Run 2b: less-aggressive shared-depth lane with `UNIQUE_BLOCKS=10`, `MLP_HIDDEN=1920`, and `BIGRAM_VOCAB_SIZE=4096`
 - Run 2c: yellow shared-depth adapter lane with `PER_APP_Q_GAIN=1` on top of Run 2b
+- Run 2d: yellow export lane with `OUTLIER_ROW_BUDGET=64` on top of Run 2c
 - Run 3: `EVAL_SEQ_LEN=4096 EVAL_BATCH_SEQS=16` only on the winning lane if it stays within eval budget
 
 Current note:
@@ -61,6 +62,18 @@ RUN THIS MANUALLY ON H100
 - setup command: `pip install zstandard flash-attn --no-build-isolation`
 - expected runtime budget: 10 minutes train, 10 minutes eval
 - success criteria: beat the shared10 base lane on sliding `val_bpb` without materially regressing exact roundtrip or violating byte and time limits
+
+## Run 2d
+- Goal: close the roundtrip gap by preserving a tiny set of high-residual rows in higher precision during export.
+- Why it matters: the recent yellow shared-depth run was a near-miss on sliding but still left a noticeable roundtrip gap, which suggests export loss may now matter more than training capacity.
+- Risks: the rescued rows may not be the right ones, or the extra fp16 payload may cost too many bytes for too little quality.
+
+RUN THIS MANUALLY ON H100
+- command generation: `py -3.11 scripts/prepare_h100_run.py configs/h100/root_shared10_mlp1920_b4096_warmup200_xlast2_qgain_outliers64.json`
+- required environment: same as Run 1
+- setup command: `pip install zstandard flash-attn --no-build-isolation`
+- expected runtime budget: 10 minutes train, 10 minutes eval
+- success criteria: improve exact roundtrip `val_bpb` over the shared10+qgain lane while staying under `16,000,000` bytes and keeping sliding performance in-family
 
 ## Run 3
 - Goal: test whether the winning lane also benefits from longer eval context.

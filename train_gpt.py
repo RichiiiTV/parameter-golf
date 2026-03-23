@@ -286,14 +286,6 @@ def eval_val(
     model.train()
     return float(val_loss.item()), float(bits_per_token * tokens_per_byte)
 
-# -----------------------------
-# POST-TRAINING QUANTIZATION
-# -----------------------------
-#
-# It's silly to export our model, which is trained in bf16 and fp32, at that same precision.
-# Instead, we get approximately the same model (with a small hit) by quantizing the model to int8 and compressing it.
-# We can then decompress the model and run in higher precision for evaluation, after closing in under the size limit.
-
 CONTROL_TENSOR_NAME_PATTERNS = tuple(
     pattern
     for pattern in os.environ.get(
@@ -315,6 +307,13 @@ INT8_KEEP_FLOAT_STORE_DTYPE = torch.float16
 INT8_PER_ROW_SCALE_DTYPE = torch.float16
 INT8_CLIP_PERCENTILE = 99.99984
 INT8_CLIP_Q = INT8_CLIP_PERCENTILE / 100.0
+OUTLIER_ROW_BUDGET = int(os.environ.get("OUTLIER_ROW_BUDGET", "0"))
+OUTLIER_TENSOR_NAME_PATTERNS = tuple(
+    pattern for pattern in os.environ.get(
+        "OUTLIER_TENSOR_NAME_PATTERNS",
+        "tok_emb.weight,bigram.proj.weight,.attn.c_q.weight,.attn.c_k.weight,.attn.c_v.weight",
+    ).split(",") if pattern
+)
 
 def tensor_nbytes(t: Tensor) -> int:
     return int(t.numel()) * int(t.element_size())
@@ -347,17 +346,14 @@ def quantize_float_tensor(t: Tensor, bits: int = 8) -> tuple[Tensor, Tensor]:
     return q, scale
 
 def quantize_state_dict_int8(state_dict: dict[str, Tensor], grad_sensitivity: dict[str, float] | None = None):
-    # Single supported clean-script export format:
-    # - per-row int8 for 2D float tensors
-    # - per-tensor int8 for other float tensors
-    # - exact passthrough for non-floats
-    # - passthrough for small float tensors, stored as fp16 to save bytes
     quantized: dict[str, Tensor] = {}
     scales: dict[str, Tensor] = {}
     dtypes: dict[str, str] = {}
     passthrough: dict[str, Tensor] = {}
     passthrough_orig_dtypes: dict[str, str] = {}
     qmeta: dict[str, dict[str, object]] = {}
+    outlier_sources: dict[str, Tensor] = {}
+    outlier_candidates: list[tuple[float, str, int]] = []
     stats = dict.fromkeys(
         ("param_count", "num_tensors", "num_float_tensors", "num_nonfloat_tensors", "baseline_tensor_bytes", "int8_payload_bytes"),
         0,
@@ -375,7 +371,6 @@ def quantize_state_dict_int8(state_dict: dict[str, Tensor], grad_sensitivity: di
             stats["int8_payload_bytes"] += tensor_nbytes(t)
             continue
 
-        # Int8 for tok_emb (better quality than int6, smaller than fp16)
         if name == "tok_emb.weight":
             q, s = quantize_float_tensor(t, bits=8)
             if s.ndim > 0:
@@ -387,17 +382,14 @@ def quantize_state_dict_int8(state_dict: dict[str, Tensor], grad_sensitivity: di
             stats["int8_payload_bytes"] += tensor_nbytes(q) + tensor_nbytes(s)
             continue
 
-        # Small float tensors are cheap enough to keep directly.
         if t.numel() <= INT8_KEEP_FLOAT_MAX_NUMEL:
             kept = keep_float_tensor(name, t, passthrough_orig_dtypes)
             passthrough[name] = kept
             stats["int8_payload_bytes"] += tensor_nbytes(kept)
             continue
 
-        # Gradient-guided adaptive quantization (budget-aware)
         stats["num_float_tensors"] += 1
         if grad_sensitivity and name in grad_sensitivity:
-            # Budget-aware: only top 10% get int7 (NOT int8 - too expensive), bottom 20% get int5
             all_sens = sorted(grad_sensitivity.values())
             p20 = all_sens[len(all_sens) // 5] if len(all_sens) > 4 else 0
             p90 = all_sens[9 * len(all_sens) // 10] if len(all_sens) > 4 else float('inf')
@@ -416,6 +408,13 @@ def quantize_state_dict_int8(state_dict: dict[str, Tensor], grad_sensitivity: di
         quantized[name] = q
         scales[name] = s
         dtypes[name] = str(t.dtype).removeprefix("torch.")
+        if OUTLIER_ROW_BUDGET > 0 and t.ndim == 2 and any(pattern in name for pattern in OUTLIER_TENSOR_NAME_PATTERNS):
+            scores = (t.float() - q.float() * s.float().view(q.shape[0], 1)).abs().amax(dim=1)
+            k = min(OUTLIER_ROW_BUDGET, scores.numel())
+            if k > 0:
+                topk = torch.topk(scores, k=k, largest=True)
+                outlier_candidates.extend((score, name, idx) for score, idx in zip(topk.values.tolist(), topk.indices.tolist()))
+                outlier_sources[name] = t.to(dtype=INT8_KEEP_FLOAT_STORE_DTYPE)
         stats["int8_payload_bytes"] += tensor_nbytes(q) + tensor_nbytes(s)
 
     obj: dict[str, object] = {
@@ -425,6 +424,19 @@ def quantize_state_dict_int8(state_dict: dict[str, Tensor], grad_sensitivity: di
         "dtypes": dtypes,
         "passthrough": passthrough,
     }
+    if OUTLIER_ROW_BUDGET > 0 and outlier_candidates:
+        row_rescue: dict[str, dict[str, Tensor]] = {}
+        for _, name, idx in sorted(outlier_candidates, reverse=True)[:OUTLIER_ROW_BUDGET]:
+            row_rescue.setdefault(name, {"rows": [], "values": []})
+            row_rescue[name]["rows"].append(idx)
+            row_rescue[name]["values"].append(outlier_sources[name][idx].clone())
+        for name, rescue in row_rescue.items():
+            rows = torch.tensor(sorted(rescue["rows"]), dtype=torch.int16)
+            vals = torch.stack([row for _, row in sorted(zip(rescue["rows"], rescue["values"]))]).contiguous()
+            rescue["rows"] = rows
+            rescue["values"] = vals
+            stats["int8_payload_bytes"] += tensor_nbytes(rows) + tensor_nbytes(vals)
+        obj["row_rescue"] = row_rescue
     if qmeta:
         obj["qmeta"] = qmeta
     if passthrough_orig_dtypes:
@@ -435,16 +447,18 @@ def dequantize_state_dict_int8(obj: dict[str, object]) -> dict[str, Tensor]:
     out: dict[str, Tensor] = {}
     qmeta = obj.get("qmeta", {})
     passthrough_orig_dtypes = obj.get("passthrough_orig_dtypes", {})
+    row_rescue = obj.get("row_rescue", {})
     for name, q in obj["quantized"].items():
         dtype = getattr(torch, obj["dtypes"][name])
         s = obj["scales"][name]
         if qmeta.get(name, {}).get("scheme") == "per_row" or s.ndim > 0:
             s = s.to(dtype=torch.float32)
-            # Broadcast the saved row scale back across trailing dimensions.
             out[name] = (q.float() * s.view(q.shape[0], *([1] * (q.ndim - 1)))).to(dtype=dtype).contiguous()
         else:
             scale = float(s.item())
             out[name] = (q.float() * scale).to(dtype=dtype).contiguous()
+        if name in row_rescue:
+            out[name][row_rescue[name]["rows"].long()] = row_rescue[name]["values"].to(dtype=dtype)
     for name, t in obj["passthrough"].items():
         # Restore small tensors, undoing the temporary fp16 storage cast if needed.
         out_t = t.detach().to("cpu").contiguous()
@@ -453,11 +467,6 @@ def dequantize_state_dict_int8(obj: dict[str, object]) -> dict[str, Tensor]:
             out_t = out_t.to(dtype=getattr(torch, orig_dtype)).contiguous()
         out[name] = out_t
     return out
-
-
-# -----------------------------
-# DATA LOADING 
-# -----------------------------
 
 def load_data_shard(file: Path) -> Tensor:
     header_bytes = 256 * np.dtype("<i4").itemsize
@@ -477,8 +486,6 @@ def load_data_shard(file: Path) -> Tensor:
 
 
 class TokenStream:
-    # Reads shards sequentially and wraps around forever. The training loop therefore
-    # has deterministic, simple streaming behavior with no sampling or workers.
     def __init__(self, pattern: str, shuffle: bool = False, seed: int = 1337):
         self.files = [Path(p) for p in sorted(glob.glob(pattern))]
         if not self.files:
@@ -511,8 +518,6 @@ class TokenStream:
 
 
 class DistributedTokenLoader:
-    # Each call consumes a contiguous chunk from the shared token stream, then slices out
-    # one disjoint span per rank. The extra "+1" token lets us build (x, y) by shifting.
     def __init__(self, pattern: str, rank: int, world_size: int, device: torch.device, shuffle: bool = False, seed: int = 1337):
         self.rank = rank
         self.world_size = world_size
@@ -528,10 +533,6 @@ class DistributedTokenLoader:
         x = local[:-1].reshape(-1, seq_len)
         y = local[1:].reshape(-1, seq_len)
         return x.to(self.device, non_blocking=True), y.to(self.device, non_blocking=True)
-
-# -----------------------------
-# TRANSFORMER MODULES
-# -----------------------------
 
 class RMSNorm(nn.Module):
     def __init__(self, eps: float | None = None):
@@ -552,7 +553,6 @@ def _fake_quant_int6(w: Tensor) -> Tensor:
 
 
 class CastedLinear(nn.Linear):
-    # Keep weights in fp32 for optimizer/state quality, cast at matmul time for bf16 compute.
     def forward(self, x: Tensor) -> Tensor:
         w = self.weight
         if _LATE_QAT_ACTIVE and self.training and w.ndim == 2 and w.shape[0] >= 64:
@@ -562,7 +562,6 @@ class CastedLinear(nn.Linear):
 
 
 def restore_low_dim_params_to_fp32(module: nn.Module) -> None:
-    # Keep small/control parameters in fp32 even when the model body runs in bf16.
     with torch.no_grad():
         for name, param in module.named_parameters():
             if (param.ndim < 2 or any(pattern in name for pattern in CONTROL_TENSOR_NAME_PATTERNS)) and param.dtype != torch.float32:
@@ -998,9 +997,6 @@ def main() -> None:
     code = Path(__file__).read_text(encoding="utf-8")
     args = Hyperparameters()
     zeropower_via_newtonschulz5 = torch.compile(zeropower_via_newtonschulz5)
-    # -----------------------------
-    # DISTRIBUTED + CUDA SETUP
-    # -----------------------------
     distributed = "RANK" in os.environ and "WORLD_SIZE" in os.environ
     rank = int(os.environ.get("RANK", "0"))
     world_size = int(os.environ.get("WORLD_SIZE", "1"))
@@ -1020,7 +1016,6 @@ def main() -> None:
         dist.barrier()
     master_process = rank == 0
 
-    # Fast math knobs
     torch.backends.cuda.matmul.allow_tf32 = True
     torch.backends.cudnn.allow_tf32 = True
     from torch.backends.cuda import enable_cudnn_sdp, enable_flash_sdp, enable_math_sdp, enable_mem_efficient_sdp
@@ -1054,9 +1049,6 @@ def main() -> None:
         console=False,
     )
     log0("=" * 100, console=False)
-    # -----------------------------
-    # TOKENIZER + VALIDATION METRIC SETUP
-    # -----------------------------
     random.seed(args.seed)
     np.random.seed(args.seed)
     torch.manual_seed(args.seed)
@@ -1080,10 +1072,6 @@ def main() -> None:
     log0(f"val_bpb:enabled tokenizer_kind=sentencepiece tokenizer_path={args.tokenizer_path}")
     log0(f"train_loader:dataset:{dataset_dir.name} train_shards:{actual_train_files}")
     log0(f"val_loader:shards pattern={args.val_files} tokens:{val_tokens.numel() - 1}")
-
-    # -----------------------------
-    # MODEL + OPTIMIZER SETUP
-    # -----------------------------
 
     base_model = GPT(
         vocab_size=args.vocab_size,
@@ -1111,11 +1099,6 @@ def main() -> None:
     compiled_model = torch.compile(base_model, dynamic=False, fullgraph=True)
     model: nn.Module = DDP(compiled_model, device_ids=[local_rank], broadcast_buffers=False) if distributed else compiled_model
 
-    # Optimizer split:
-    # - token embedding (Adam) uses EMBED_LR
-    # - untied lm_head (Adam) uses HEAD_LR
-    # - matrix params in transformer blocks use MATRIX_LR via Muon
-    # - vectors/scalars use SCALAR_LR via Adam
     block_named_params = list(base_model.shared_blocks.named_parameters())
     matrix_params = [
         p
@@ -1132,7 +1115,6 @@ def main() -> None:
         scalar_params.append(base_model.q_gains)
     if base_model.skip_weights.numel() > 0:
         scalar_params.append(base_model.skip_weights)
-    # SmearGate and BigramHash params go through Adam at scalar_lr
     scalar_params.append(base_model.smear.gate)
     if base_model.bigram is not None:
         for p in base_model.bigram.parameters():
@@ -1190,10 +1172,6 @@ def main() -> None:
     )
     log0(f"seed:{args.seed}")
 
-    # -----------------------------
-    # DATA LOADER & MODEL WARMUP
-    # -----------------------------
-
     shuffle_data = bool(int(os.environ.get("SHUFFLE_DATA", "0")))
     train_loader = DistributedTokenLoader(args.train_files, rank, world_size, device, shuffle=shuffle_data, seed=args.seed)
 
@@ -1214,8 +1192,6 @@ def main() -> None:
         remaining_ms = max(max_wallclock_ms - elapsed_ms, 0.0)
         return remaining_ms / max(warmdown_ms, 1e-9) if remaining_ms <= warmdown_ms else 1.0
 
-    # Warmup primes the compiled forward/backward/optimizer paths, then we restore the
-    # initial weights/optimizer state so measured training starts from the true init.
     if args.warmup_steps > 0:
         initial_model_state = {name: tensor.detach().cpu().clone() for name, tensor in base_model.state_dict().items()}
         initial_optimizer_states = [copy.deepcopy(opt.state_dict()) for opt in optimizers]
@@ -1242,10 +1218,6 @@ def main() -> None:
             model.require_backward_grad_sync = True
         shuffle_data = bool(int(os.environ.get("SHUFFLE_DATA", "0")))
     train_loader = DistributedTokenLoader(args.train_files, rank, world_size, device, shuffle=shuffle_data, seed=args.seed)
-
-    # -----------------------------
-    # MAIN TRAINING LOOP
-    # -----------------------------
 
     training_time_ms = 0.0
     stop_after_step: int | None = None
@@ -1317,12 +1289,10 @@ def main() -> None:
             for group in opt.param_groups:
                 group["lr"] = group["base_lr"] * scale
 
-        # Late QAT: enable fake int6 quantization in last 4% of training
         global _LATE_QAT_ACTIVE
         if args.late_qat:
             _LATE_QAT_ACTIVE = (scale < 0.1 and scale > 0)
 
-        # Gradient sensitivity accumulation (during last 10% of warmdown)
         grad_quant_enabled = bool(int(os.environ.get("GRAD_QUANT", "0")))
         if grad_quant_enabled and scale < 0.1 and scale > 0:
             if not hasattr(main, '_grad_sens'):
@@ -1340,13 +1310,11 @@ def main() -> None:
             opt.step()
         zero_grad_all()
 
-        # EMA update
         if ema_state is not None:
             d = args.ema_decay
             for name, t in base_model.state_dict().items():
                 ema_state[name].mul_(d).add_(t.detach().float(), alpha=1.0 - d)
 
-        # SWA: collect checkpoints during warmdown tail
         swa_frac = float(os.environ.get("SWA_FRAC", 0.5))
         swa_every = int(os.environ.get("SWA_EVERY", 50))
         if args.swa_enabled and not args.ema_enabled and scale < swa_frac and step % swa_every == 0:
@@ -1370,7 +1338,6 @@ def main() -> None:
                 f"train_time:{approx_training_time_ms:.0f}ms step_avg:{approx_training_time_ms / step:.2f}ms"
             )
 
-        # Needed to sync whether we've reached the wallclock cap.
         reached_cap = max_wallclock_ms is not None and approx_training_time_ms >= max_wallclock_ms
         if distributed and max_wallclock_ms is not None:
             reached_cap_tensor = torch.tensor(int(reached_cap), device=device)
@@ -1384,7 +1351,6 @@ def main() -> None:
         f"reserved: {torch.cuda.max_memory_reserved() // 1024 // 1024} MiB"
     )
 
-    # Apply EMA or SWA
     if ema_state is not None:
         log0(f"ema: loading EMA weights (decay={args.ema_decay})")
         ema_loaded = {name: t.to(dtype=base_model.state_dict()[name].dtype) for name, t in ema_state.items()}
@@ -1398,12 +1364,6 @@ def main() -> None:
         del swa_state
     elif swa_count <= 1 and ema_state is None:
         log0("swa/ema: no weight averaging applied")
-
-    # -----------------------------
-    # SERIALIZATION + ROUNDTRIP VALIDATION
-    # -----------------------------
-    # Save the raw state (useful for debugging/loading in PyTorch directly), then always produce
-    # the compressed int8 artifact and validate the round-tripped weights.
 
     if master_process:
         torch.save(base_model.state_dict(), "final_model.pt")

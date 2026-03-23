@@ -28,7 +28,7 @@
 
 # GREEN / YELLOW / RED idea board
 - `GREEN`: frozen dense snapshot `b1024-warmup200-xlast2`, shared-depth root lane with `UNIQUE_BLOCKS=8` and `MLP_HIDDEN=1664`, gradient-guided adaptive quantization, `PARTIAL_ROPE_DIMS=16`, `LN_SCALE=1`, `EMA_ENABLED=1`, sliding eval at `stride=64`.
-- `YELLOW`: `EVAL_SEQ_LEN=4096` follow-up, per-application `q_gain` adapters on shared blocks, more aggressive shared-depth schedules, sparse high-precision outlier retention, tokenizer changes, eval-time adaptation, custom Triton kernels.
+- `YELLOW`: `EVAL_SEQ_LEN=4096` follow-up, per-application `q_gain` adapters on shared blocks, sparse high-precision outlier retention, more aggressive shared-depth schedules, tokenizer changes, eval-time adaptation, custom Triton kernels.
 - `RED`: auto-launched H100 jobs, over-budget train/eval, network/data access during eval, oversized artifact, seed brute force.
 
 # Roles and ownership
