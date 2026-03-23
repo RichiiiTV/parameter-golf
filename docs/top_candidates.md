@@ -1,52 +1,43 @@
 # Top Candidates
 
 ## Operational Frontier
-- Operational SOTA for this pass is local `pr332:records/track_10min_16mb/2026-03-21_12L_GradQuant_PartialRoPE_EMA` at `val_bpb=1.1320`, `bytes_total=15,652,352`.
-- The merged upstream README still shows the March 20 winner at `1.1428`, so the root port is intentionally targeting the ahead-of-README PR frontier.
+- Accepted upstream README still shows the March 20 winner at `1.1428`.
+- The active reference donor for root remains local `pr332:records/track_10min_16mb/2026-03-21_12L_GradQuant_PartialRoPE_EMA` at `1.1320`.
+- The new root lane is not a clone of later PRs; it is a PR529-inspired dense reset that keeps root self-contained and under the line cap.
 
 ## Active Root Mainline
-- Frozen dense fallback: `snapshots/train_gpt_2026-03-23_root_pr332_b458k_b1024_warmup200_xlast2.py`
-- Frozen dense baseline config: `configs/h100/root_snapshot_b1024_warmup200_xlast2.json`
-- New primary root lane: `configs/h100/root_shared8_mlp1664_b1024_warmup200_xlast2.json`
-- New less-aggressive sharing lane: `configs/h100/root_shared10_mlp1920_b4096_warmup200_xlast2.json`
-- Yellow adapter lane: `configs/h100/root_shared10_mlp1920_b4096_warmup200_xlast2_qgain.json`
-- Yellow export lane: `configs/h100/root_shared10_mlp1920_b4096_warmup200_xlast2_qgain_outliers64.json`
-- Eval-only follow-up: `configs/h100/root_shared8_mlp1664_b1024_warmup200_xlast2_eval4096.json`
+- Frozen fallback snapshot: `snapshots/train_gpt_2026-03-23_root_shared10_qgain_outliers64.py`
+- Dense fallback snapshot: `snapshots/train_gpt_2026-03-23_root_pr332_b458k_b1024_warmup200_xlast2.py`
+- Dense H100 truth baseline: `configs/h100/root_snapshot_b1024_warmup200_xlast2.json`
+- GPTQ-only dense baseline: `configs/h100/root_gptq12_b1024_warmup200_xlast2.json`
+- Funded dense GPTQ lane: `configs/h100/root_gptq14_mlp1792_b4096_warmup200_xlast2.json`
+- Funded dense GPTQ lane + TTT-lite: `configs/h100/root_gptq14_mlp1792_b4096_warmup200_xlast2_ttt.json`
 
 ## Main Prediction
-- The dense local lane has saturated around the low `1.160x` sliding band on `8xA100`.
-- The next meaningful gain is more likely to come from effective depth-per-byte than from more warmup, BigramHash, or schedule micro-tuning.
-- The first shared lane proved the basic idea, but the width ladder saturated around `UNIQUE_BLOCKS=8`.
-- The next meaningful jump is more likely to come from reducing over-sharing by moving to `UNIQUE_BLOCKS=10` while keeping a large MLP and `BIGRAM_VOCAB_SIZE=4096`.
+- The shared-depth / q-gain / sparse-outlier branch improved local A100 results but saturated far above the target range.
+- The next meaningful jump is more likely to come from real stored-byte savings in the exporter plus a denser model, not more micro-tuning of the shared lane.
+- Packed low-bit GPTQ-style export should buy real artifact headroom on the dense root baseline.
+- That headroom is best spent first on `NUM_LAYERS=14`, `MLP_HIDDEN=1792`, and `BIGRAM_VOCAB_SIZE=4096`.
+- TTT-lite is an explicit yellow follow-up, not the new default. It should only be judged after the GPTQ-funded dense lane is healthy on bytes and exact roundtrip.
 
 ## Why This Delta
-- Parameter sharing attacks the real bottleneck in this benchmark: stored bytes under a hard artifact cap.
-- The shared lane keeps the successful dense recipe fixed:
-  - `SHUFFLE_DATA=1`
-  - `WARMUP_STEPS=200`
-  - `BIGRAM_VOCAB_SIZE=4096`
-  - `XSA_LAST_N=2`
-  - `EVAL_STRIDE=64`
-- The new root change is deliberately narrow:
-  - `UNIQUE_BLOCKS=10` over 12 applications
-  - `MLP_HIDDEN=1920`
-  - no MoE, no activation change, no new quantization path
-- The first yellow follow-up is even narrower:
-  - `PER_APP_Q_GAIN=1`
-  - no other architectural or export change
-- The next yellow follow-up is exporter-only:
-  - `OUTLIER_ROW_BUDGET=64`
-  - rescue a tiny set of high-residual rows in higher precision after quantization
+- The previous root branch was spending complexity on shared-weight specialization tricks while still losing too much on post-export quality.
+- GPTQ-style packing targets the actual bottleneck: large matrix storage cost inside the artifact cap.
+- A funded dense model is a cleaner use of extra bytes than more parameter reuse once the shared lane has flattened.
+- TTT-lite is kept doc-isolated, eval-only, and narrow:
+  - `lm_head`
+  - `c_q` and `c_v` of the last 4 blocks
+  - one update per chunk after scoring
+  - reset between documents
 
 ## Immediate Ladder
 - Run 1: frozen dense snapshot on H100
-- Run 2: shared-depth root lane with `UNIQUE_BLOCKS=10`, `MLP_HIDDEN=1920`, and `BIGRAM_VOCAB_SIZE=4096`
-- Run 3: yellow shared-depth adapter lane with `PER_APP_Q_GAIN=1` on top of Run 2
-- Run 4: yellow export lane with `OUTLIER_ROW_BUDGET=64` on top of Run 3
-- Run 5: `EVAL_SEQ_LEN=4096 EVAL_BATCH_SEQS=16` only on the winner of Runs 1-4
+- Run 2: root GPTQ-only dense baseline
+- Run 3: root GPTQ-funded dense lane with `NUM_LAYERS=14`, `MLP_HIDDEN=1792`, and `BIGRAM_VOCAB_SIZE=4096`
+- Run 4: Run 3 plus `TTT_ENABLED=1`
 
 ## Ranking Policy
-- Rank by lower sliding-window `val_bpb`
-- Require exact roundtrip to stay in-family and non-regressive
-- Require `bytes_total < 16,000,000`
-- Break close ties by higher train tokens processed under the same 600-second budget
+- Rank by lower exact roundtrip `val_bpb` first.
+- Treat sliding-window `val_bpb` as the secondary optimization target for tie-breaking and follow-up eval work.
+- Require `bytes_total < 16,000,000`.
+- Require H100 truth before promotion.

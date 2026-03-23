@@ -8,9 +8,11 @@ from pathlib import Path
 FINAL_PRE_RE = re.compile(r"final_pre_export_exact val_loss:(?P<loss>\S+) val_bpb:(?P<bpb>\S+)")
 FINAL_POST_RE = re.compile(r"final_int8_(?:zlib|zstd)_roundtrip_exact val_loss:(?P<loss>\S+) val_bpb:(?P<bpb>\S+)")
 FINAL_POST_FAST_RE = re.compile(r"final_int8_(?:zlib|zstd)_roundtrip val_loss:\S+ val_bpb:\S+ eval_time:(?P<eval_ms>\d+)ms")
+FINAL_TTT_RE = re.compile(r"final_int8_(?:zlib|zstd)_ttt_lora_exact val_loss:(?P<loss>\S+) val_bpb:(?P<bpb>\S+)")
 STOP_RE = re.compile(r"stopping_early: wallclock_cap train_time:(?P<train_ms>\d+)ms step:(?P<step>\d+)/(?P<iters>\d+)")
 SIZE_RE = re.compile(r"Total submission size int8\+(?:zlib|zstd): (?P<bytes>\d+) bytes")
-MODEL_SIZE_RE = re.compile(r"Serialized model int8\+(?:zlib|zstd): (?P<bytes>\d+) bytes")
+MODEL_SIZE_RE = re.compile(r"Serialized model int8\+(?:zlib|zstd): (?P<bytes>\d+) bytes \(payload:(?P<payload>\d+) packed:(?P<packed>\d+) raw_torch:(?P<raw>\d+) payload_ratio:(?P<ratio>\S+)\)")
+MODEL_SIZE_OLD_RE = re.compile(r"Serialized model int8\+(?:zlib|zstd): (?P<bytes>\d+) bytes")
 CODE_SIZE_RE = re.compile(r"Code size: (?P<bytes>\d+) bytes")
 TOKENS_RE = re.compile(r"train_tokens_seen:(?P<tokens>\d+)")
 PEAK_MEM_RE = re.compile(r"peak memory allocated: (?P<allocated>\d+) MiB reserved: (?P<reserved>\d+) MiB")
@@ -34,6 +36,9 @@ def parse_train_log(path: str | Path) -> dict[str, object]:
         elif match := FINAL_POST_RE.fullmatch(line):
             result["post_val_loss"] = float(match.group("loss"))
             result["post_val_bpb"] = float(match.group("bpb"))
+        elif match := FINAL_TTT_RE.fullmatch(line):
+            result["ttt_val_loss"] = float(match.group("loss"))
+            result["ttt_val_bpb"] = float(match.group("bpb"))
         elif match := FINAL_POST_FAST_RE.fullmatch(line):
             result["eval_time_ms"] = int(match.group("eval_ms"))
         elif match := STOP_RE.fullmatch(line):
@@ -43,6 +48,11 @@ def parse_train_log(path: str | Path) -> dict[str, object]:
             result["artifact_bytes"] = int(match.group("bytes"))
             result["bytes_total"] = int(match.group("bytes"))
         elif match := MODEL_SIZE_RE.fullmatch(line):
+            result["model_bytes"] = int(match.group("bytes"))
+            result["quant_payload_bytes"] = int(match.group("payload"))
+            result["packed_payload_bytes"] = int(match.group("packed"))
+            result["quant_raw_bytes"] = int(match.group("raw"))
+        elif match := MODEL_SIZE_OLD_RE.fullmatch(line):
             result["model_bytes"] = int(match.group("bytes"))
         elif match := CODE_SIZE_RE.fullmatch(line):
             result["code_bytes"] = int(match.group("bytes"))
