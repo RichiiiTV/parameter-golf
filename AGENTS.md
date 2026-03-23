@@ -28,7 +28,7 @@
 
 # GREEN / YELLOW / RED idea board
 - `GREEN`: frozen dense snapshot `b1024-warmup200-xlast2`, shared-depth root lane with `UNIQUE_BLOCKS=8` and `MLP_HIDDEN=1664`, gradient-guided adaptive quantization, `PARTIAL_ROPE_DIMS=16`, `LN_SCALE=1`, `EMA_ENABLED=1`, sliding eval at `stride=64`.
-- `YELLOW`: `EVAL_SEQ_LEN=4096` follow-up, more aggressive shared-depth schedules, sparse high-precision outlier retention, tokenizer changes, eval-time adaptation, custom Triton kernels.
+- `YELLOW`: `EVAL_SEQ_LEN=4096` follow-up, per-application `q_gain` adapters on shared blocks, more aggressive shared-depth schedules, sparse high-precision outlier retention, tokenizer changes, eval-time adaptation, custom Triton kernels.
 - `RED`: auto-launched H100 jobs, over-budget train/eval, network/data access during eval, oversized artifact, seed brute force.
 
 # Roles and ownership
@@ -78,12 +78,13 @@
 # Current best candidates
 - frozen snapshot `snapshots/train_gpt_2026-03-23_root_pr332_b458k_b1024_warmup200_xlast2.py`
 - root `train_gpt.py` with `UNIQUE_BLOCKS=8`, `MLP_HIDDEN=1664`, `TRAIN_BATCH_TOKENS=458752`, `BIGRAM_VOCAB_SIZE=1024`, `WARMUP_STEPS=200`, `SHUFFLE_DATA=1`, `XSA_LAST_N=2`
+- root `train_gpt.py` with `UNIQUE_BLOCKS=10`, `MLP_HIDDEN=1920`, `TRAIN_BATCH_TOKENS=458752`, `BIGRAM_VOCAB_SIZE=4096`, `WARMUP_STEPS=200`, `SHUFFLE_DATA=1`, `XSA_LAST_N=2`
 
 # Next 10 experiments
 - Run 1: frozen dense snapshot on H100 for truth baseline
 - Run 2: shared-depth root lane with `UNIQUE_BLOCKS=8` and `MLP_HIDDEN=1664`
-- Run 3: eval-only `EVAL_SEQ_LEN=4096 EVAL_BATCH_SEQS=16` on the winner of Runs 1-2 if it stays in budget
-- Run 4: adjust shared lane width upward only if Run 2 wins and leaves byte headroom
+- Run 3: shared-depth root lane with `UNIQUE_BLOCKS=10`, `MLP_HIDDEN=1920`, and `BIGRAM_VOCAB_SIZE=4096`
+- Run 4: eval-only `EVAL_SEQ_LEN=4096 EVAL_BATCH_SEQS=16` on the winner of Runs 1-3 if it stays in budget
 - Run 5: adjust shared lane width downward only if Run 2 wins on quality but misses the byte cap
 - Run 6: three-seed sweep at `SEED=1337` on the winning dense or shared lane
 - Run 7: three-seed sweep at `SEED=1338` on the winning dense or shared lane

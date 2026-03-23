@@ -7,6 +7,8 @@ Operational frontier for this pass:
 ## Run Order
 - Run 1: frozen dense snapshot baseline on H100
 - Run 2: shared-depth root lane with `UNIQUE_BLOCKS=8`, `MLP_HIDDEN=1664`, and the same best dense training recipe
+- Run 2b: less-aggressive shared-depth lane with `UNIQUE_BLOCKS=10`, `MLP_HIDDEN=1920`, and `BIGRAM_VOCAB_SIZE=4096`
+- Run 2c: yellow shared-depth adapter lane with `PER_APP_Q_GAIN=1` on top of Run 2b
 - Run 3: `EVAL_SEQ_LEN=4096 EVAL_BATCH_SEQS=16` only on the winning lane if it stays within eval budget
 
 Current note:
@@ -35,6 +37,30 @@ RUN THIS MANUALLY ON H100
 - setup command: `pip install zstandard flash-attn --no-build-isolation`
 - expected runtime budget: 10 minutes train, 10 minutes eval
 - success criteria: beat the dense baseline on sliding `val_bpb` while staying under `16,000,000` bytes and keeping exact roundtrip in-family
+
+## Run 2b
+- Goal: reduce over-sharing after the shared8 width ladder started saturating.
+- Why it matters: the local A100 shared8 runs improved strongly with extra width but still left a lot of quality on the table, which suggests under-specialized layers more than underused bytes.
+- Risks: the extra unique blocks may erase the byte savings too quickly or slow the step time enough to offset the quality gain.
+
+RUN THIS MANUALLY ON H100
+- command generation: `py -3.11 scripts/prepare_h100_run.py configs/h100/root_shared10_mlp1920_b4096_warmup200_xlast2.json`
+- required environment: same as Run 1
+- setup command: `pip install zstandard flash-attn --no-build-isolation`
+- expected runtime budget: 10 minutes train, 10 minutes eval
+- success criteria: beat the best shared8 lane on sliding `val_bpb` while staying under `16,000,000` bytes and keeping exact roundtrip in-family
+
+## Run 2c
+- Goal: restore per-application head specialization without adding another large matrix family.
+- Why it matters: per-application `q_gain` is a tiny yellow adapter on top of the shared10 lane, so it directly tests whether the current bottleneck is shared-attention rigidity rather than missing bulk capacity.
+- Risks: it may be too small to matter, or it may help sliding while hurting exact roundtrip.
+
+RUN THIS MANUALLY ON H100
+- command generation: `py -3.11 scripts/prepare_h100_run.py configs/h100/root_shared10_mlp1920_b4096_warmup200_xlast2_qgain.json`
+- required environment: same as Run 1
+- setup command: `pip install zstandard flash-attn --no-build-isolation`
+- expected runtime budget: 10 minutes train, 10 minutes eval
+- success criteria: beat the shared10 base lane on sliding `val_bpb` without materially regressing exact roundtrip or violating byte and time limits
 
 ## Run 3
 - Goal: test whether the winning lane also benefits from longer eval context.

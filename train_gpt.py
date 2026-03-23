@@ -64,6 +64,7 @@ class Hyperparameters:
     vocab_size = int(os.environ.get("VOCAB_SIZE", 1024))
     num_layers = int(os.environ.get("NUM_LAYERS", 9))
     unique_blocks = int(os.environ.get("UNIQUE_BLOCKS", 0))
+    per_app_q_gain = bool(int(os.environ.get("PER_APP_Q_GAIN", "0")))
     num_kv_heads = int(os.environ.get("NUM_KV_HEADS", 4))
     model_dim = int(os.environ.get("MODEL_DIM", 512))
     num_heads = int(os.environ.get("NUM_HEADS", 8))
@@ -659,7 +660,7 @@ class CausalSelfAttention(nn.Module):
         proj = (y_g * vn).sum(dim=-1, keepdim=True) * vn
         return (y_g - proj).reshape(B, T, H, D)
 
-    def forward(self, x: Tensor, use_xsa: bool | None = None) -> Tensor:
+    def forward(self, x: Tensor, use_xsa: bool | None = None, q_gain: Tensor | None = None) -> Tensor:
         bsz, seqlen, dim = x.shape
         q = self.c_q(x).reshape(bsz, seqlen, self.num_heads, self.head_dim).transpose(1, 2)
         k = self.c_k(x).reshape(bsz, seqlen, self.num_kv_heads, self.head_dim).transpose(1, 2)
@@ -669,7 +670,8 @@ class CausalSelfAttention(nn.Module):
         cos, sin = self.rotary(seqlen, x.device, q.dtype)
         q = apply_rotary_emb(q, cos, sin, partial_dims=self.partial_rope_dims)
         k = apply_rotary_emb(k, cos, sin, partial_dims=self.partial_rope_dims)
-        q = q * self.q_gain.to(dtype=q.dtype)[None, :, None, None]
+        gain = self.q_gain if q_gain is None else q_gain
+        q = q * gain.to(dtype=q.dtype)[None, :, None, None]
         if _HAS_FLASH_ATTN:
             q_fa = q.transpose(1, 2)
             k_fa = k.transpose(1, 2)
@@ -770,14 +772,14 @@ class Block(nn.Module):
         mlp_scale: Tensor,
         ln_scale_factor: float,
         use_xsa: bool = False,
+        q_gain: Tensor | None = None,
     ) -> Tensor:
         mix = resid_mix.to(dtype=x.dtype)
         x = mix[0][None, None, :] * x + mix[1][None, None, :] * x0
-        attn_out = self.attn(self.attn_norm(x) * ln_scale_factor, use_xsa=use_xsa)
+        attn_out = self.attn(self.attn_norm(x) * ln_scale_factor, use_xsa=use_xsa, q_gain=q_gain)
         x = x + attn_scale.to(dtype=x.dtype)[None, None, :] * attn_out
         x = x + mlp_scale.to(dtype=x.dtype)[None, None, :] * self.mlp(self.mlp_norm(x) * ln_scale_factor)
         return x
-
 class GPT(nn.Module):
     def __init__(
         self,
@@ -797,6 +799,7 @@ class GPT(nn.Module):
         bigram_dim: int = 128,
         xsa_last_n: int = 0,
         unique_blocks: int = 0,
+        per_app_q_gain: bool = False,
     ):
         super().__init__()
         if logit_softcap <= 0.0:
@@ -816,11 +819,15 @@ class GPT(nn.Module):
             self.block_schedule_enc = list(range(self.num_encoder_layers))
             self.block_schedule_dec = list(range(self.num_encoder_layers, num_layers))
             unique_blocks = num_layers
-        elif unique_blocks == 8 and num_layers == 12:
-            self.block_schedule_enc = [0, 1, 2, 3, 2, 3]
-            self.block_schedule_dec = [4, 5, 6, 7, 6, 7]
+        elif num_layers == 12 and unique_blocks in (8, 10):
+            if unique_blocks == 8:
+                self.block_schedule_enc = [0, 1, 2, 3, 2, 3]
+                self.block_schedule_dec = [4, 5, 6, 7, 6, 7]
+            else:
+                self.block_schedule_enc = [0, 1, 2, 3, 2, 4]
+                self.block_schedule_dec = [5, 6, 7, 8, 7, 9]
         else:
-            raise ValueError(f"UNIQUE_BLOCKS must be 0, {num_layers}, or 8 when NUM_LAYERS=12, got {unique_blocks}")
+            raise ValueError(f"UNIQUE_BLOCKS must be 0, {num_layers}, or 8/10 when NUM_LAYERS=12, got {unique_blocks}")
         self.shared_blocks = nn.ModuleList(
             [
                 Block(
@@ -840,6 +847,7 @@ class GPT(nn.Module):
         resid_mixes = torch.zeros(num_layers, 2, model_dim, dtype=torch.float32)
         resid_mixes[:, 0].fill_(1.0)
         self.resid_mixes = nn.Parameter(resid_mixes)
+        self.q_gains = nn.Parameter(torch.full((num_layers, num_heads), qk_gain_init, dtype=torch.float32)) if per_app_q_gain else None
         self.xsa_last_n = xsa_last_n
         partial_rope = int(os.environ.get("PARTIAL_ROPE_DIMS", 0))
         ln_scale_enabled = bool(int(os.environ.get("LN_SCALE", 0)))
@@ -867,13 +875,12 @@ class GPT(nn.Module):
                     if ".proj." in name or name.endswith(".proj"):
                         with torch.no_grad():
                             module.weight.mul_(1.0 / math.sqrt(2 * num_layers))
-
     def _run_block(self, block_idx: int, app_idx: int, x: Tensor, x0: Tensor) -> Tensor:
         return self.shared_blocks[block_idx](
             x, x0, self.resid_mixes[app_idx], self.attn_scales[app_idx], self.mlp_scales[app_idx],
-            self.ln_scale_factors[app_idx], use_xsa=self.xsa_last_n > 0 and app_idx >= self.num_block_apps - self.xsa_last_n
+            self.ln_scale_factors[app_idx], use_xsa=self.xsa_last_n > 0 and app_idx >= self.num_block_apps - self.xsa_last_n,
+            q_gain=None if self.q_gains is None else self.q_gains[app_idx]
         )
-
     def _run_layers(self, x: Tensor, x0: Tensor) -> Tensor:
         skips: list[Tensor] = []
         for app_idx, block_idx in enumerate(self.block_schedule_enc):
@@ -884,7 +891,6 @@ class GPT(nn.Module):
                 x = x + self.skip_weights[i].to(dtype=x.dtype)[None, None, :] * skips.pop()
             x = self._run_block(block_idx, self.num_encoder_layers + i, x, x0)
         return x
-
     def forward(self, input_ids: Tensor, target_ids: Tensor) -> Tensor:
         x = self.tok_emb(input_ids)
         if self.bigram is not None:
@@ -902,7 +908,6 @@ class GPT(nn.Module):
             logits_proj = self.lm_head(x)
         logits = self.logit_softcap * torch.tanh(logits_proj / self.logit_softcap)
         return F.cross_entropy(logits.float(), targets, reduction="mean")
-
     @torch.no_grad()
     def get_logits(self, input_ids: Tensor) -> Tensor:
         x = self.tok_emb(input_ids)
@@ -917,7 +922,6 @@ class GPT(nn.Module):
         else:
             logits_proj = self.lm_head(x)
         return self.logit_softcap * torch.tanh(logits_proj / self.logit_softcap)
-
 def eval_val_sliding(
     args, base_model: nn.Module, rank: int, world_size: int, device: torch.device,
     val_tokens: Tensor, base_bytes_lut: Tensor, has_leading_space_lut: Tensor,
@@ -985,23 +989,18 @@ def eval_val_sliding(
     tokens_per_byte = val_token_count.item() / val_byte_count.item()
     base_model.train()
     return float(val_loss.item()), float(bits_per_token * tokens_per_byte)
-
-
 # -----------------------------
 # TRAINING
 # -----------------------------
-
 def main() -> None:
     global zeropower_via_newtonschulz5
 
     code = Path(__file__).read_text(encoding="utf-8")
     args = Hyperparameters()
     zeropower_via_newtonschulz5 = torch.compile(zeropower_via_newtonschulz5)
-
     # -----------------------------
     # DISTRIBUTED + CUDA SETUP
     # -----------------------------
-
     distributed = "RANK" in os.environ and "WORLD_SIZE" in os.environ
     rank = int(os.environ.get("RANK", "0"))
     world_size = int(os.environ.get("WORLD_SIZE", "1"))
@@ -1055,11 +1054,9 @@ def main() -> None:
         console=False,
     )
     log0("=" * 100, console=False)
-
     # -----------------------------
     # TOKENIZER + VALIDATION METRIC SETUP
     # -----------------------------
-
     random.seed(args.seed)
     np.random.seed(args.seed)
     torch.manual_seed(args.seed)
@@ -1105,6 +1102,7 @@ def main() -> None:
         bigram_dim=args.bigram_dim,
         xsa_last_n=args.xsa_last_n,
         unique_blocks=args.unique_blocks,
+        per_app_q_gain=args.per_app_q_gain,
     ).to(device).bfloat16()
     for module in base_model.modules():
         if isinstance(module, CastedLinear):
@@ -1130,6 +1128,8 @@ def main() -> None:
         if p.ndim < 2 or any(pattern in name for pattern in CONTROL_TENSOR_NAME_PATTERNS)
     ]
     scalar_params.extend([base_model.attn_scales, base_model.mlp_scales, base_model.resid_mixes])
+    if base_model.q_gains is not None:
+        scalar_params.append(base_model.q_gains)
     if base_model.skip_weights.numel() > 0:
         scalar_params.append(base_model.skip_weights)
     # SmearGate and BigramHash params go through Adam at scalar_lr
