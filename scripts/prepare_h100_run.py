@@ -44,7 +44,7 @@ def emit_block(
     print(f"setup_command: {setup_cmd}")
     print("command:")
     print(command)
-    print("expected_outputs: logs/<RUN_ID>.txt, final_model.int8.ptz, final roundtrip metrics")
+    print("expected_outputs: logs/<RUN_ID>.txt, final_model*.ptz, final roundtrip metrics")
     print(f"risks: {risks}")
     print(f"success_criteria: {success}")
     print()

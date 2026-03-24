@@ -3,8 +3,8 @@
 
 # Frontier
 - Accepted record source of truth: upstream `README.md` plus accepted `records/`.
-- Operational donor baseline for this root pass: local `pr332:records/track_10min_16mb/2026-03-21_12L_GradQuant_PartialRoPE_EMA` at `1.1320`.
-- Current active root path is a dense reset plus packed GPTQ export, with TTT-lite as an isolated yellow follow-up.
+- Current accepted top merged record: `#549` / `2026-03-23_LeakyReLU_LegalTTT_ParallelMuon` at `1.1194`.
+- Active root path is a hard reset to the `#549` donor plus one isolated improvement: late soft-round QAT from the `#589` family.
 
 # Hard constraints
 - Never auto-run H100 jobs.
@@ -14,48 +14,33 @@
 - Keep `train_gpt.py` and `train_gpt_mlx.py` under `1500` lines by `scripts/check_line_budget.py`.
 
 # Workflow
-- H100-only, manual-only, throughput-first.
+- H100-only, manual-only.
 - Root `train_gpt.py` is the canonical runner.
-- Frozen snapshots are allowed as fallback baselines, but new active work happens in root.
+- Frozen snapshots are allowed as fallbacks, but active work happens in root.
 - `flash-attn` is optional in code and recommended only in the H100 environment.
 
 # GREEN / YELLOW / RED
-- `GREEN`: dense snapshot fallback, packed GPTQ export on the dense baseline, funded dense GPTQ lane if exact roundtrip stays healthy.
-- `YELLOW`: TTT-lite, longer eval context, tokenizer changes, Triton, sparse high-precision rescue, aggressive export tricks.
+- `GREEN`: exact `#549` repro in root.
+- `YELLOW`: late soft-round QAT on top of the exact `#549` root lane.
 - `RED`: auto-launched H100 jobs, over-budget runs, network/data access during eval, oversized artifacts, seed brute force.
 
-# Ownership
-- Rule Auditor: `docs/compliance_matrix.md`
-- Baseline Reverse Engineer: `docs/baseline_map.md`
-- Hopper Systems Engineer: `docs/hopper_plan.md`, `configs/h100/*`, `scripts/prepare_h100_run.py`
-- Quantization / Export Engineer: `docs/export_strategy.md`
-- Architecture / Optimization Researcher: `docs/model_ideas.md`
-- Experiment Manager: `experiments/registry.csv`, `docs/top_candidates.md`
-
 # Current hypotheses
-- The shared-depth branch saturated and should not remain the active root mainline.
-- Packed low-bit GPTQ-style export is the next mechanism worth spending complexity on because it directly targets stored bytes.
-- The first funded dense lane after GPTQ should be `NUM_LAYERS=14`, `MLP_HIDDEN=1792`, `BIGRAM_VOCAB_SIZE=4096`.
-- TTT-lite should stay eval-only, doc-isolated, and off by default.
+- The previous GPTQ/TTT-lite root lane was the wrong local direction for the merged upstream frontier and is now archived.
+- The strongest source-backed next delta on the accepted `#549` family is late soft-round QAT.
+- TTT semantics must remain legal score-first and chunk-local.
 
 # Current blockers
-- No H100 truth run has been executed from the dense snapshot fallback.
-- No H100 truth run has been executed from the GPTQ-only dense root lane.
-- No H100 truth run has been executed from the funded dense GPTQ lane.
-- No H100 truth run has been executed from the funded dense GPTQ lane with TTT-lite.
+- No H100 truth run has been executed from the exact `#549` root repro.
+- No H100 truth run has been executed from the `#549` + soft-round-QAT root lane.
 
 # Active candidates
-- `snapshots/train_gpt_2026-03-23_root_pr332_b458k_b1024_warmup200_xlast2.py`
-- `configs/h100/root_snapshot_b1024_warmup200_xlast2.json`
-- `configs/h100/root_gptq12_b1024_warmup200_xlast2.json`
-- `configs/h100/root_gptq14_mlp1792_b4096_warmup200_xlast2.json`
-- `configs/h100/root_gptq14_mlp1792_b4096_warmup200_xlast2_ttt.json`
+- `configs/h100/root_pr549_repro.json`
+- `configs/h100/root_pr549_softqat.json`
+- `snapshots/train_gpt_2026-03-24_pre549_dense_gptq_tttlite_root.py`
 
 # Run ladder
-- Run 1: dense snapshot baseline on H100
-- Run 2: GPTQ-only dense baseline on H100
-- Run 3: funded dense GPTQ lane on H100
-- Run 4: funded dense GPTQ lane plus TTT-lite on H100
+- Run 1: exact `#549` root repro on H100
+- Run 2: exact `#549` + `SOFT_QAT_ENABLED=1` on H100
 
 # Rules for code changes
 - Keep record-critical logic in root `train_gpt.py`.
@@ -65,8 +50,8 @@
 
 # Rules for eval and export
 - Preserve challenge semantics.
-- Log exact roundtrip metrics, sliding metrics, packed payload bytes, artifact bytes, and eval time.
-- Keep TTT doc-isolated and reset adapters between documents.
+- Log exact roundtrip metrics, sliding metrics, TTT metrics, artifact bytes, and eval time.
+- Keep TTT score-first, chunk-local, and never train on the last scored chunk.
 
 # Dependencies
 - No new mandatory runtime dependencies.
@@ -77,4 +62,4 @@
 - Update `experiments/registry.csv`.
 - Update `docs/top_candidates.md`.
 - Update `docs/hopper_plan.md`.
-- If a lane is archived, preserve it in `snapshots/` before resetting root.
+- Preserve archived root lanes in `snapshots/` before resetting root.
