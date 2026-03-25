@@ -9,6 +9,7 @@ FINAL_PRE_RE = re.compile(r"final_pre_export_exact val_loss:(?P<loss>\S+) val_bp
 FINAL_POST_RE = re.compile(r"final_(?:int8_(?:zlib|zstd)|int6)_roundtrip_exact val_loss:(?P<loss>\S+) val_bpb:(?P<bpb>\S+)")
 FINAL_POST_FAST_RE = re.compile(r"final_(?:int8_(?:zlib|zstd)|int6)_roundtrip val_loss:\S+ val_bpb:\S+ eval_time:(?P<eval_ms>\d+)ms")
 FINAL_TTT_RE = re.compile(r"(?:final_int8_(?:zlib|zstd)_ttt_lora_exact|final_ttt_exact) val_loss:(?P<loss>\S+) val_bpb:(?P<bpb>\S+)")
+FINAL_NGRAM_RE = re.compile(r"final_(?:int8_(?:zlib|zstd)|int6)_sliding_window_ngram(?P<order>\d+)(?P<partial>_partial)?_exact val_loss:(?P<loss>\S+) val_bpb:(?P<bpb>\S+)(?: coverage:(?P<coverage>\S+))?")
 STOP_RE = re.compile(r"stopping_early: wallclock_cap train_time:(?P<train_ms>\d+)ms step:(?P<step>\d+)/(?P<iters>\d+)")
 SIZE_RE = re.compile(r"Total submission size (?:int8\+(?:zlib|zstd)|int6\+lzma): (?P<bytes>\d+) bytes")
 MODEL_SIZE_RE = re.compile(r"Serialized model int8\+(?:zlib|zstd): (?P<bytes>\d+) bytes \(payload:(?P<payload>\d+) packed:(?P<packed>\d+) raw_torch:(?P<raw>\d+) payload_ratio:(?P<ratio>\S+)\)")
@@ -39,6 +40,13 @@ def parse_train_log(path: str | Path) -> dict[str, object]:
         elif match := FINAL_TTT_RE.fullmatch(line):
             result["ttt_val_loss"] = float(match.group("loss"))
             result["ttt_val_bpb"] = float(match.group("bpb"))
+        elif match := FINAL_NGRAM_RE.fullmatch(line):
+            result["ngram_order"] = int(match.group("order"))
+            result["ngram_val_loss"] = float(match.group("loss"))
+            result["ngram_val_bpb"] = float(match.group("bpb"))
+            result["ngram_partial"] = bool(match.group("partial"))
+            if match.group("coverage") is not None:
+                result["ngram_coverage"] = float(match.group("coverage"))
         elif match := FINAL_POST_FAST_RE.fullmatch(line):
             result["eval_time_ms"] = int(match.group("eval_ms"))
         elif match := STOP_RE.fullmatch(line):
