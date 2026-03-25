@@ -13,3 +13,5 @@ artifacts/
 experiments/runs/
 final_model.pt
 final_model.int8.ptz
+final_model.int6.ptz
+scratch/

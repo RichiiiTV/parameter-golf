@@ -24,7 +24,11 @@ import torch.distributed as dist
 import torch.nn.functional as F
 from torch import Tensor, nn
 from torch.nn.parallel import DistributedDataParallel as DDP
-from flash_attn_interface import flash_attn_func as flash_attn_3_func
+try:
+    from flash_attn_interface import flash_attn_func as flash_attn_3_func
+    _HAS_FLASH_ATTN = True
+except ImportError:
+    _HAS_FLASH_ATTN = False
 class Hyperparameters:
     data_path = os.environ.get("DATA_PATH", "./data/datasets/fineweb10B_sp1024")
     train_files = os.path.join(data_path, "fineweb_train_*.bin")
@@ -514,7 +518,21 @@ class CausalSelfAttention(nn.Module):
         q = apply_rotary_emb(q, cos, sin, self.rope_dims)
         k = apply_rotary_emb(k, cos, sin, self.rope_dims)
         q = q * self.q_gain.to(dtype=q.dtype)[None, None, :, None]
-        y = flash_attn_3_func(q, k, v, causal=True)
+        if _HAS_FLASH_ATTN:
+            y = flash_attn_3_func(q, k, v, causal=True)
+        else:
+            qh = q.transpose(1, 2)
+            kh = k.transpose(1, 2)
+            vh = v.transpose(1, 2)
+            if self.num_kv_heads != self.num_heads:
+                group = self.num_heads // self.num_kv_heads
+                kh = kh.repeat_interleave(group, dim=1)
+                vh = vh.repeat_interleave(group, dim=1)
+            scores = qh @ kh.transpose(-2, -1)
+            scores = scores * (1.0 / math.sqrt(self.head_dim))
+            mask = torch.triu(torch.ones(seqlen, seqlen, device=x.device, dtype=torch.bool), diagonal=1)
+            scores = scores.masked_fill(mask, float("-inf"))
+            y = (scores.softmax(dim=-1) @ vh).transpose(1, 2)
         if self.use_xsa:
             y = self._xsa_efficient(y, v)
         y = y.reshape(bsz, seqlen, dim)
