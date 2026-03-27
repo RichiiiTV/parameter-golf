@@ -1,30 +1,38 @@
 # Hopper Plan
 
-Operational frontier for this pass:
+Active valid frontier for this pass:
 - accepted merged record: `#549`
-- live operational frontier: `#753`
-- donor record path: `pr753:records/track_10min_16mb/2026-03-25_PodracingII_backoff7gram_8xH100`
-- reported result: `val_bpb=0.9625`, `bytes_total=15,593,916`
-- active root delta: `#809`-style single-pass order-9 n-gram port, first on the dense control and then on the requested-point fixed-block state-space hybrid
+- provisional valid open target: `#875`
+- active root snapshot fallback: `snapshots/train_gpt_2026-03-25_pre753_pr549_softqat_root.py`
+- archived tokenizer snapshot: `snapshots/train_gpt_2026-03-27_pre875_hnet_wip_root.py`
+- active root deltas: pure-neural GDN base, one deeper-capacity follow-up, and one legal TTT follow-up
 
 ## Run Order
-- Run 1: dense `#753` control plus `#809`-style chunked order-9 n-gram
-- Run 2: current requested-point hybrid plus the same `#809`-style n-gram
+- Run 1: exact pure-neural GDN base
+- Run 2: pure-neural GDN plus one extra GDN block
+- Run 3: pure-neural GDN plus legal score-first TTT
 
 ## Run 1
-- Goal: verify that the current root can carry a record-safer `#809`-style evaluator on the dense `#753` path without changing the model or export path.
-- Command generation: `py -3.11 scripts/prepare_h100_run.py configs/h100/root_pr753_repro_ngram809.json`
-- Success criteria: improve the old 7-gram control while staying under the train/eval limits and the 16MB artifact cap.
-- Risk: if the dense control is slow or unstable, the hybrid lane should not be promoted yet.
+- Goal: validate the compact `#875`-style GDN base under the root exact byte-accounted metric path.
+- Command generation: `py -3.11 scripts/prepare_h100_run.py configs/h100/root_pr875_gdn_repro.json`
+- Success criteria: land in the `#875` pure-neural family while staying under the 16,000,000-byte cap and under the 10-minute train/eval limits.
+- Risk: the local PyTorch GDN mixer may need tuning if throughput or export quality drifts too far from the donor family.
 
 ## Run 2
-- Goal: test whether the requested-point hybrid improves dense-model quality while sharing the same `#809`-style evaluator as the dense control.
-- Command generation: `py -3.11 scripts/prepare_h100_run.py configs/h100/root_pr753_hybrid_ssm_ngram809.json`
-- Success criteria: improve both `final_int6_sliding_window_exact` and the final n-gram exact metric versus the dense `#809`-style control without breaking the byte or eval budgets.
-- Risk: the hybrid may improve dense-model quality but lose enough throughput to miss the 10-minute wallclock.
+- Goal: test the cleanest architecture-only improvement with minimal legality risk and minimal attribution ambiguity.
+- Command generation: `py -3.11 scripts/prepare_h100_run.py configs/h100/root_pr875_gdn_deeper.json`
+- Success criteria: improve final post-export `val_bpb` versus the pure-neural GDN base while staying under the byte cap and within the 10-minute train/eval limits.
+- Risk: one extra block may reduce step count enough to erase the capacity gain if throughput falls too much.
+
+## Run 3
+- Goal: test whether legal score-first TTT improves the same GDN base without changing training or export semantics.
+- Command generation: `py -3.11 scripts/prepare_h100_run.py configs/h100/root_pr875_gdn_ttt.json`
+- Success criteria: improve final post-TTT `val_bpb` versus the pure-neural GDN base without breaking byte or time limits.
+- Risk: legal TTT may be neutral or too slow to justify promotion even if it remains valid.
 
 ## Notes
-- Root was hard-reset to the upstream `#753` donor family before this pass.
-- The pre-hybrid `#753` root is preserved in `snapshots/train_gpt_2026-03-25_pre753_state_space_hybrid_root.py`.
-- The pre-reset `#549` + soft-QAT root is preserved in `snapshots/train_gpt_2026-03-25_pre753_pr549_softqat_root.py`.
+- `#753` / eval-cache / hybrid work remains archived pending rule clarification and is not part of the active record ladder.
+- The donor `#875` judge math is not reused here; root keeps exact SentencePiece LUT byte accounting instead.
+- Tokenizer WIP is archived for this pass and should not be mixed into GDN evaluation.
+- The deeper-GDN lane is preferred over immediate TurboQuant because it targets model quality directly and preserves clear attribution if only a few H100 runs are available.
 - `flash-attn` remains optional and cluster-side.

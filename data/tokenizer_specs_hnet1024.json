@@ -1,0 +1,26 @@
+{
+  "tokenizers": [
+    {
+      "name": "sp_bpe_1024",
+      "dataset_suffix": "sp1024",
+      "kind": "sentencepiece_bpe",
+      "vocab_size": 1024
+    },
+    {
+      "name": "hnet_chunk_v1_1024",
+      "dataset_suffix": "hnet1024",
+      "kind": "hnet_chunk_v1",
+      "vocab_size": 1024,
+      "filename": "fineweb_hnet_1024.json",
+      "recommended_bigram_vocab_size": 1536,
+      "tokenizer_train_docs": 200000,
+      "stage1_top_k": 4096,
+      "stage2_top_k": 6144,
+      "stage1_min_bytes": 2,
+      "stage1_max_bytes": 24,
+      "stage2_min_bytes": 3,
+      "stage2_max_bytes": 32,
+      "stage2_max_parts": 4
+    }
+  ]
+}

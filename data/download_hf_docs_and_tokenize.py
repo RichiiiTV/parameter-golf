@@ -1,9 +1,4 @@
-"""Download docs_selected.jsonl from Hugging Face and tokenize it locally.
-
-This script is standalone. It does not import any local exporter or tokenizer
-helpers. Tokenizer configs are JSON only and currently support the built-in
-pure-byte and SentencePiece tokenizer definitions in `data/tokenizer_specs.json`.
-"""
+"""Download docs_selected.jsonl from Hugging Face and tokenize it locally."""
 
 from __future__ import annotations
 
@@ -11,6 +6,7 @@ import argparse
 import json
 import os
 import shutil
+import sys
 from dataclasses import asdict, dataclass
 from pathlib import Path
 from typing import Any
@@ -18,6 +14,8 @@ from typing import Any
 import numpy as np
 from huggingface_hub import hf_hub_download
 from huggingface_hub.utils import EntryNotFoundError
+sys.path.insert(0, str(Path(__file__).resolve().parents[1]))
+from data.hnet_tokenizer import build_hnet_chunk_tokenizer, sha256_path
 
 
 DOCS_FILENAME = "docs_selected.jsonl"
@@ -186,19 +184,23 @@ def load_specs(config_path: Path) -> list[dict[str, Any]]:
         raise ValueError("tokenizer_config must define a non-empty list")
     if not all(isinstance(spec, dict) for spec in specs):
         raise ValueError("each tokenizer spec must be a JSON object")
-    return [dict(spec) for spec in specs]
+    return [dict(spec) for spec in specs if bool(spec.get("enabled", True))]
 
 
 def tokenizer_kind(spec: dict[str, Any]) -> str:
     kind = spec.get("kind")
     if kind in {"byte", "pure_byte"}:
         return "byte"
+    if kind == "hnet_chunk_v1":
+        return "hnet_chunk_v1"
     if kind in {"sentencepiece_bpe", "sentencepiece"}:
         return "sentencepiece_bpe"
     builder = str(spec.get("builder", ""))
     builder_name = builder.rsplit(":", 1)[-1]
     if builder_name == "build_pure_byte_tokenizer":
         return "byte"
+    if builder_name == "build_hnet_chunk_tokenizer":
+        return "hnet_chunk_v1"
     if builder_name == "build_sentencepiece_tokenizer":
         return "sentencepiece_bpe"
     if spec.get("dataset_suffix") == "byte260":
@@ -395,6 +397,13 @@ def export_shards(
     return stats
 
 
+def shard_hashes(output_dir: Path) -> list[dict[str, Any]]:
+    return [
+        {"path": str(path), "sha256": sha256_path(path), "bytes": path.stat().st_size}
+        for path in sorted(output_dir.glob("fineweb_*.bin"))
+    ]
+
+
 def build_tokenizers(
     *,
     specs: list[dict[str, Any]],
@@ -422,11 +431,12 @@ def build_tokenizers(
                 spec["reuse_model_path"] = str(reuse_sp_models[vocab_size])
 
         selected_specs.append(spec)
-        built = (
-            build_pure_byte_tokenizer(spec=spec, docs_jsonl=docs_jsonl, tokenizers_dir=tokenizers_dir)
-            if kind == "byte"
-            else build_sentencepiece_tokenizer(spec=spec, docs_jsonl=docs_jsonl, tokenizers_dir=tokenizers_dir)
-        )
+        if kind == "byte":
+            built = build_pure_byte_tokenizer(spec=spec, docs_jsonl=docs_jsonl, tokenizers_dir=tokenizers_dir)
+        elif kind == "hnet_chunk_v1":
+            built = build_hnet_chunk_tokenizer(spec=spec, docs_jsonl=docs_jsonl, tokenizers_dir=tokenizers_dir)
+        else:
+            built = build_sentencepiece_tokenizer(spec=spec, docs_jsonl=docs_jsonl, tokenizers_dir=tokenizers_dir)
         name = str(built["name"])
         dataset_suffix = built.get("dataset_suffix")
         dataset_name = str(built.get("dataset_name", f"fineweb{VERSION}_{dataset_suffix}"))
@@ -570,7 +580,9 @@ def main() -> None:
         "remote_root": args.remote_root,
         "num_docs": docs_total,
         "docs_sha256": None if docs_sidecar is None else docs_sidecar.get("docs_sha256"),
+        "docs_sha256_local": sha256_path(docs_jsonl),
         "source_manifest": str(docs_sidecar_path(docs_jsonl)) if docs_sidecar is not None else None,
+        "source_manifest_sha256": None if docs_sidecar is None else sha256_path(docs_sidecar_path(docs_jsonl)),
     }
     if docs_sidecar is not None:
         docs_meta["source_sidecar"] = docs_sidecar
@@ -614,6 +626,7 @@ def main() -> None:
                 "eos_id": tok["eos_id"],
                 "recommended_bigram_vocab_size": tok["recommended_bigram_vocab_size"],
                 "stats": stats,
+                "shards": shard_hashes(output_dir),
             }
         )
 
