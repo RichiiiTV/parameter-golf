@@ -28,6 +28,9 @@ def emit_block(
     risks: str,
     point_name: str | None = None,
     slurm: dict[str, object] | None = None,
+    sanity_check_command: str | None = None,
+    timing_expectation: str | None = None,
+    prerequisite: str | None = None,
 ) -> None:
     slurm = slurm or {}
     point_slug = slugify(point_name or config_path.stem)[:80]
@@ -42,6 +45,12 @@ def emit_block(
     print(f"purpose: {purpose}")
     print(f"runtime_budget_minutes: {budget}")
     print(f"setup_command: {setup_cmd}")
+    if sanity_check_command:
+        print(f"sanity_check_command: {sanity_check_command}")
+    if prerequisite:
+        print(f"prerequisite: {prerequisite}")
+    if timing_expectation:
+        print(f"timing_expectation: {timing_expectation}")
     print("command:")
     print(command)
     print("expected_outputs: logs/<RUN_ID>.txt, final_model*.ptz, final roundtrip metrics")
@@ -61,6 +70,9 @@ def emit_single(root: Path, config_path: Path, config: dict[str, object]) -> Non
         success=str(config.get("success_criteria", "Improve post-export val_bpb without breaking the 16,000,000-byte cap.")),
         risks=str(config.get("risks", "Compile overhead, eval-time budget, and artifact-byte regressions.")),
         slurm=dict(config.get("slurm", {})),
+        sanity_check_command=str(config.get("sanity_check_command", "")) or None,
+        timing_expectation=str(config.get("timing_expectation", "")) or None,
+        prerequisite=str(config.get("prerequisite", "")) or None,
     )
 
 
@@ -92,6 +104,9 @@ def emit_matrix(root: Path, config_path: Path, config: dict[str, object]) -> Non
             risks=risks,
             point_name=", ".join(point_name),
             slurm=slurm,
+            sanity_check_command=str(config.get("sanity_check_command", "")) or None,
+            timing_expectation=str(config.get("timing_expectation", "")) or None,
+            prerequisite=str(config.get("prerequisite", "")) or None,
         )
 
 

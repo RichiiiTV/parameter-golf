@@ -46,6 +46,8 @@
   "profile": "h100-root-pr549-repro",
   "promote": true,
   "purpose": "Reproduce the accepted #549 record stack in root on the true H100 surface before judging the improvement lane.",
+  "sanity_check_command": "rg -n \"batch_schedule|model_family:gdn|GDN_BLOCKS|qo_bank|SOFT_QAT_ENABLED\" train_gpt.py",
+  "timing_expectation": "From the 1xH100 proxy: expect roughly 80-100ms/train step, 70-120s sliding eval, and 230-370s full score-first TTT on 8xH100.",
   "runtime_budget_minutes": 10,
   "success_criteria": "Land in-family with the accepted #549 quality, size, and timing band while staying under 16,000,000 bytes."
 }

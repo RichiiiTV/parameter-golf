@@ -48,6 +48,9 @@
   "profile": "h100-root-pr549-softqat",
   "promote": true,
   "purpose": "Measure whether the late soft-round surrogate improves the post-export #549 stack without breaking the byte or time budgets.",
+  "prerequisite": "Run only after the exact #549 repro lands near the accepted family on 8xH100.",
+  "sanity_check_command": "rg -n \"batch_schedule|model_family:gdn|GDN_BLOCKS|qo_bank|SOFT_QAT_ENABLED\" train_gpt.py",
+  "timing_expectation": "Use the exact #549 repro as the timing gate. Do not judge the soft-QAT lane if the repro already risks the 600s eval cap or lands far off-family.",
   "runtime_budget_minutes": 10,
   "success_criteria": "Beat the exact #549 repro on final post-TTT val_bpb while keeping the artifact under 16,000,000 bytes and the eval under 10 minutes."
 }
