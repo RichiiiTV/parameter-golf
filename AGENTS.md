@@ -50,6 +50,7 @@
 
 # Run ladder
 - Run 1: `#1060`-derived promoted lane on H100 via `configs/h100/root_pr1060_b3072_prune.json`
+- Optional directional proxy only: `configs/h100/root_pr1060_proxy_1xh100.json`
 - If the base misses the size or timing gate, stop and adjust the root; do not spend another run on `#549`/`#589` or exact `#1060` replay lanes.
 - Before any H100 run, verify the pod has the new root: `train_gpt.py` should contain `TRAIN_LOADER_MODE`, `GPTQ_RESERVE_MS`, and `gptq:start reserved_train_data`, and should not contain `ttt_`.
 

@@ -12,6 +12,7 @@
     "GPTQ_CALIBRATION_STEPS": "4",
     "GPTQ_ENABLED": "1",
     "GPTQ_GROUP_SIZE": "128",
+    "GPTQ_GUARD_MS": "500",
     "GPTQ_RESERVE_MS": "1000",
     "ITERATIONS": "16",
     "LN_SCALE": "1",

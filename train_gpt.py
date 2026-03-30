@@ -82,6 +82,7 @@ class Hyperparameters:
     gptq_group_size = int(os.environ.get("GPTQ_GROUP_SIZE", 128))
     gptq_calibration_steps = int(os.environ.get("GPTQ_CALIBRATION_STEPS", 64))
     gptq_reserve_ms = float(os.environ.get("GPTQ_RESERVE_MS", 14000))
+    gptq_guard_ms = float(os.environ.get("GPTQ_GUARD_MS", 4000))
     gptq_hessian_damp = float(os.environ.get("GPTQ_HESSIAN_DAMP", 1e-4))
     gptq_target_patterns = tuple(
         pattern for pattern in os.environ.get(
@@ -1019,11 +1020,15 @@ class ReservedGPTQCalibrator:
         if not self.enabled or not self.modules:
             return {}, 0.0
         reserve_boundary = None if max_wallclock_ms is None else max_wallclock_ms - self.args.gptq_reserve_ms
-        if reserve_boundary is not None and training_time_ms > reserve_boundary:
+        if max_wallclock_ms is not None and training_time_ms >= max_wallclock_ms:
             raise RuntimeError(
-                f"GPTQ calibration would start after the reserved boundary: "
-                f"train_ms={training_time_ms:.0f} reserve_boundary_ms={reserve_boundary:.0f}"
+                f"GPTQ calibration would start after the global wallclock cap: "
+                f"train_ms={training_time_ms:.0f} max_wallclock_ms={max_wallclock_ms:.0f}"
             )
+        if reserve_boundary is not None and training_time_ms > reserve_boundary:
+            late_ms = training_time_ms - reserve_boundary
+            remaining_ms = max(max_wallclock_ms - training_time_ms, 0.0) if max_wallclock_ms is not None else -1.0
+            log0(f"gptq:late_start_warning over_by:{late_ms:.0f}ms reserve_boundary_ms:{reserve_boundary:.0f} remaining_ms:{remaining_ms:.0f}")
         log0(
             f"gptq:start reserved_train_data elapsed={training_time_ms:.0f}ms "
             f"steps={self.args.gptq_calibration_steps} bits:{self.args.gptq_bits} "
@@ -1228,13 +1233,12 @@ def main() -> None:
     max_wallclock_ms = 1000.0 * args.max_wallclock_seconds if args.max_wallclock_seconds > 0 else None
     train_budget_ms = None
     if max_wallclock_ms is not None:
-        train_budget_ms = max_wallclock_ms - args.gptq_reserve_ms if args.gptq_enabled else max_wallclock_ms
+        train_budget_ms = (
+            max_wallclock_ms - args.gptq_reserve_ms - args.gptq_guard_ms
+            if args.gptq_enabled else max_wallclock_ms
+        )
         if args.gptq_enabled:
-            log0(
-                f"gptq:reserving reserve_ms:{args.gptq_reserve_ms:.0f} "
-                f"train_budget_ms:{train_budget_ms:.0f} calib_steps:{args.gptq_calibration_steps} "
-                f"bits:{args.gptq_bits} group_size:{args.gptq_group_size}"
-            )
+            log0(f"gptq:reserving reserve_ms:{args.gptq_reserve_ms:.0f} guard_ms:{args.gptq_guard_ms:.0f} train_budget_ms:{train_budget_ms:.0f} calib_steps:{args.gptq_calibration_steps} bits:{args.gptq_bits} group_size:{args.gptq_group_size}")
     def lr_mul(step: int, elapsed_ms: float) -> float:
         if args.warmdown_iters <= 0:
             return 1.0
@@ -1340,6 +1344,9 @@ def main() -> None:
                 ema_state[name].mul_(d).add_(t.detach().float(), alpha=1.0 - d)
         step += 1
         approx_training_time_ms = training_time_ms + 1000.0 * (time.perf_counter() - t0)
+        if train_budget_ms is not None and train_budget_ms - approx_training_time_ms <= max(args.gptq_guard_ms * 0.25, 1000.0):
+            torch.cuda.synchronize()
+            approx_training_time_ms = training_time_ms + 1000.0 * (time.perf_counter() - t0)
         should_log_train = (
             args.train_log_every > 0
             and (step <= 10 or step % args.train_log_every == 0 or stop_after_step is not None)

@@ -11,6 +11,7 @@ Active valid frontier for this pass:
 
 ## Run Order
 - Run 1: `#1060`-derived promoted lane
+- Optional proxy only: `configs/h100/root_pr1060_proxy_1xh100.json` on one H100 if you need a cheap directional read; do not treat it as timing or legality proof for the 8x lane.
 
 ## Run 1
 - Goal: port the strongest plausible valid open `#1060` family, then spend exactly one funded delta on `BigramHash(3072,112)` without adding more eval machinery.

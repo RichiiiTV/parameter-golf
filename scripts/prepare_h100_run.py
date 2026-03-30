@@ -31,11 +31,12 @@ def emit_block(
     sanity_check_command: str | None = None,
     timing_expectation: str | None = None,
     prerequisite: str | None = None,
+    nproc_per_node: int = 8,
 ) -> None:
     slurm = slurm or {}
     point_slug = slugify(point_name or config_path.stem)[:80]
     run_id = slugify(str(slurm.get("run_id", point_slug)))[:100] or "parameter-golf-h100"
-    command = wrap_command(env=env, nproc_per_node=8, run_id=run_id, script=str(slurm.get("script", "train_gpt.py")))
+    command = wrap_command(env=env, nproc_per_node=nproc_per_node, run_id=run_id, script=str(slurm.get("script", "train_gpt.py")))
     setup_cmd = slurm.get("setup_command", "pip install zstandard flash-attn --no-build-isolation")
 
     print("RUN THIS MANUALLY ON H100")
@@ -73,6 +74,7 @@ def emit_single(root: Path, config_path: Path, config: dict[str, object]) -> Non
         sanity_check_command=str(config.get("sanity_check_command", "")) or None,
         timing_expectation=str(config.get("timing_expectation", "")) or None,
         prerequisite=str(config.get("prerequisite", "")) or None,
+        nproc_per_node=int(config.get("nproc_per_node", 8)),
     )
 
 
@@ -88,6 +90,7 @@ def emit_matrix(root: Path, config_path: Path, config: dict[str, object]) -> Non
     success = str(config.get("success_criteria", "Improve post-export val_bpb without breaking the 16,000,000-byte cap."))
     risks = str(config.get("risks", "Compile overhead, eval-time budget, and artifact-byte regressions."))
     slurm = dict(config.get("slurm", {}))
+    nproc_per_node = int(config.get("nproc_per_node", 8))
     for combo in product(*(matrix[key] for key in keys)):
         point_env = dict(base_env)
         point_name = []
@@ -107,6 +110,7 @@ def emit_matrix(root: Path, config_path: Path, config: dict[str, object]) -> Non
             sanity_check_command=str(config.get("sanity_check_command", "")) or None,
             timing_expectation=str(config.get("timing_expectation", "")) or None,
             prerequisite=str(config.get("prerequisite", "")) or None,
+            nproc_per_node=nproc_per_node,
         )
 
 
