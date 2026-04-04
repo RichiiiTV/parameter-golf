@@ -331,12 +331,19 @@ def quantize_gptq_tensor(
         raise ValueError(f"Hessian shape mismatch for GPTQ tensor: {tuple(h.shape)} vs {(w.shape[1], w.shape[1])}")
     diag = torch.diagonal(h)
     dead = diag <= 0
-    if dead.any():
-        h[dead, dead] = 1.0
-        w[:, dead] = 0.0
+    if dead.any(): h[dead, dead] = 1.0; w[:, dead] = 0.0
     damp = max(float(diag.mean().item()) * hessian_damp, 1e-6)
-    h.diagonal().add_(damp)
-    h_inv = torch.cholesky_inverse(torch.linalg.cholesky(h)).contiguous()
+    h = 0.5 * (h + h.T)
+    eye = torch.eye(h.shape[0], dtype=h.dtype)
+    h_inv = None
+    for mult in (1.0, 10.0, 100.0, 1000.0):
+        try:
+            h_inv = torch.cholesky_inverse(torch.linalg.cholesky(h + eye * (damp * mult))).contiguous(); break
+        except torch._C._LinAlgError:
+            pass
+    if h_inv is None:
+        evals, evecs = torch.linalg.eigh(h)
+        h_inv = ((evecs * evals.clamp_min(damp).reciprocal()) @ evecs.T).contiguous()
     rows, cols = w.shape
     num_groups = (cols + group_size - 1) // group_size
     scales = torch.empty((rows, num_groups), dtype=torch.float16)
@@ -1238,11 +1245,7 @@ def main() -> None:
     log0(f"attention_mode:gqa num_heads:{args.num_heads} num_kv_heads:{args.num_kv_heads}")
     log0(f"attn_pattern:{attn_pattern} local_attn_window:{args.local_attn_window}")
     log0(f"tied_embed_lr:{token_lr} matrix_lr:{args.matrix_lr} scalar_lr:{args.scalar_lr}")
-    log0(
-        f"train_batch_tokens:{args.train_batch_tokens} train_seq_len:{args.train_seq_len} "
-        f"iterations:{args.iterations} warmup_steps:{args.warmup_steps} "
-        f"max_wallclock_seconds:{args.max_wallclock_seconds:.3f}"
-    )
+    log0(f"train_batch_tokens:{args.train_batch_tokens} train_seq_len:{args.train_seq_len} iterations:{args.iterations} warmup_steps:{args.warmup_steps} max_wallclock_seconds:{args.max_wallclock_seconds:.3f}")
     log0(f"seed:{args.seed}")
     train_loader = build_train_loader(args, rank, world_size, device)
     log0(f"train_loader:dataset:{dataset_dir.name} train_shards:{actual_train_files} {train_loader.describe()}")
