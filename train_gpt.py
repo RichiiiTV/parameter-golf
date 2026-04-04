@@ -75,6 +75,8 @@ class Hyperparameters:
     ve_dim = int(os.environ.get("VE_DIM", 128))
     ve_layers = os.environ.get("VE_LAYERS", "9,10")
     negative_slope = float(os.environ.get("NEGATIVE_SLOPE", 0.5))
+    attn_pattern = os.environ.get("ATTN_PATTERN", "")
+    local_attn_window = int(os.environ.get("LOCAL_ATTN_WINDOW", 512))
     train_loader_mode = os.environ.get("TRAIN_LOADER_MODE", "coprime_multi_shard")
     loader_shards_per_rank = int(os.environ.get("LOADER_SHARDS_PER_RANK", 4))
     gptq_enabled = bool(int(os.environ.get("GPTQ_ENABLED", "1")))
@@ -673,10 +675,21 @@ class CausalSelfAttention(nn.Module):
         self.proj = CastedLinear(dim, dim, bias=False)
         self.proj._zero_init = True
         self.q_gain = nn.Parameter(torch.full((num_heads,), qk_gain_init, dtype=torch.float32))
-        self.partial_rope_dims = 0  # Set externally
-        rope_dim = self.head_dim  # Full RoPE by default
+        self.partial_rope_dims = 0
+        rope_dim = self.head_dim
         self.rotary = Rotary(rope_dim, base=rope_base, train_seq_len=1024)
-        self.use_xsa = False  # Set externally by GPT.__init__
+        self.use_xsa = False
+        self.attn_mode = "global"
+        self.local_attn_window = 0
+        self._local_mask: Tensor | None = None
+        self._local_mask_seq_len = 0
+    def _get_local_mask(self, seqlen: int, device: torch.device) -> Tensor:
+        if self._local_mask is None or self._local_mask_seq_len != seqlen or self._local_mask.device != device:
+            idx = torch.arange(seqlen, device=device)
+            dist = idx[:, None] - idx[None, :]
+            self._local_mask = (dist >= 0) & (dist < self.local_attn_window)
+            self._local_mask_seq_len = seqlen
+        return self._local_mask
     def _xsa_efficient(self, y: Tensor, v: Tensor) -> Tensor:
         B, T, H, D = y.shape
         Hkv = v.size(-2)
@@ -703,15 +716,18 @@ class CausalSelfAttention(nn.Module):
             q_fa = q.transpose(1, 2)
             k_fa = k.transpose(1, 2)
             v_fa = v.transpose(1, 2)
-            y = flash_attn_func(q_fa, k_fa, v_fa, causal=True)  # (B, S, H, D)
+            y = flash_attn_func(
+                q_fa, k_fa, v_fa, causal=True,
+                window_size=(self.local_attn_window - 1, 0) if self.attn_mode == "local" else (-1, -1),
+            )
         else:
             y = F.scaled_dot_product_attention(
                 q, k, v,
-                attn_mask=None,
-                is_causal=True,
+                attn_mask=None if self.attn_mode == "global" else self._get_local_mask(seqlen, x.device),
+                is_causal=self.attn_mode == "global",
                 enable_gqa=(self.num_kv_heads != self.num_heads),
             )
-            y = y.transpose(1, 2)  # (B, H, S, D) -> (B, S, H, D)
+            y = y.transpose(1, 2)
         if self.use_xsa:
             v_bshd = v.transpose(1, 2)  # XSA needs (B, S, Hkv, D)
             y = self._xsa_efficient(y, v_bshd)
@@ -824,6 +840,8 @@ class GPT(nn.Module):
         ve_dim: int = 128,
         ve_layers: str = "9,10",
         negative_slope: float = 0.5,
+        attn_pattern: str = "",
+        local_attn_window: int = 512,
     ):
         super().__init__()
         if logit_softcap <= 0.0:
@@ -864,6 +882,11 @@ class GPT(nn.Module):
         else:
             self.ve_shared = None
             self.ve_layer_scales = nn.ParameterList()
+        attn_modes = [part.strip().lower() for part in attn_pattern.split(",") if part.strip()] if attn_pattern else []
+        if not attn_modes:
+            attn_modes = ["global"] * num_layers
+        if len(attn_modes) != num_layers:
+            raise ValueError(f"ATTN_PATTERN must have {num_layers} entries, got {len(attn_modes)}")
         for i in range(num_layers):
             if xsa_last_n > 0 and i >= num_layers - xsa_last_n:
                 self.blocks[i].attn.use_xsa = True
@@ -872,6 +895,11 @@ class GPT(nn.Module):
                 self.blocks[i].attn.rotary = Rotary(partial_rope_dims, base=rope_base, train_seq_len=1024)
             if ln_scale:
                 self.blocks[i].ln_scale_factor = 1.0 / math.sqrt(i + 1)
+            mode = attn_modes[i]
+            if mode not in {"g", "global", "l", "local"}:
+                raise ValueError(f"Unsupported attention mode {mode!r} in ATTN_PATTERN")
+            self.blocks[i].attn.attn_mode = "local" if mode.startswith("l") else "global"
+            self.blocks[i].attn.local_attn_window = local_attn_window
         self.final_norm = RMSNorm()
         self._init_weights()
     def _get_ve(self, layer_idx: int, input_ids: Tensor, cache: dict[str, Tensor]) -> Tensor | None:
@@ -1144,28 +1172,18 @@ def main() -> None:
     )
     log0(f"val_bpb:enabled tokenizer_kind=sentencepiece tokenizer_path={args.tokenizer_path}")
     log0(f"val_loader:shards pattern={args.val_files} tokens:{val_tokens.numel() - 1}")
-    base_model = GPT(
-        vocab_size=args.vocab_size,
-        num_layers=args.num_layers,
-        model_dim=args.model_dim,
-        num_heads=args.num_heads,
-        num_kv_heads=args.num_kv_heads,
-        mlp_mult=args.mlp_mult,
-        mlp_hidden=args.mlp_hidden,
-        tied_embed_init_std=args.tied_embed_init_std,
-        logit_softcap=args.logit_softcap,
-        rope_base=args.rope_base,
-        qk_gain_init=args.qk_gain_init,
-        bigram_vocab_size=args.bigram_vocab_size,
-        bigram_dim=args.bigram_dim,
-        xsa_last_n=args.xsa_last_n,
-        partial_rope_dims=args.partial_rope_dims,
-        ln_scale=args.ln_scale,
-        ve_enabled=args.ve_enabled,
-        ve_dim=args.ve_dim,
-        ve_layers=args.ve_layers,
-        negative_slope=args.negative_slope,
-    ).to(device).bfloat16()
+    def make_gpt() -> GPT:
+        return GPT(
+            vocab_size=args.vocab_size, num_layers=args.num_layers, model_dim=args.model_dim,
+            num_heads=args.num_heads, num_kv_heads=args.num_kv_heads, mlp_mult=args.mlp_mult,
+            mlp_hidden=args.mlp_hidden, tied_embed_init_std=args.tied_embed_init_std,
+            logit_softcap=args.logit_softcap, rope_base=args.rope_base, qk_gain_init=args.qk_gain_init,
+            bigram_vocab_size=args.bigram_vocab_size, bigram_dim=args.bigram_dim, xsa_last_n=args.xsa_last_n,
+            partial_rope_dims=args.partial_rope_dims, ln_scale=args.ln_scale, ve_enabled=args.ve_enabled,
+            ve_dim=args.ve_dim, ve_layers=args.ve_layers, negative_slope=args.negative_slope,
+            attn_pattern=args.attn_pattern, local_attn_window=args.local_attn_window,
+        )
+    base_model = make_gpt().to(device).bfloat16()
     for module in base_model.modules():
         if isinstance(module, CastedLinear):
             module.float()
@@ -1213,10 +1231,12 @@ def main() -> None:
     n_params = sum(p.numel() for p in base_model.parameters())
     log0(f"model_params:{n_params}")
     xsa_layers = [i for i, b in enumerate(base_model.blocks) if b.attn.use_xsa]
+    attn_pattern = ",".join("L" if b.attn.attn_mode == "local" else "G" for b in base_model.blocks)
     log0(f"XSA:last_{args.xsa_last_n} active_layers:{xsa_layers}")
     log0(f"world_size:{world_size} grad_accum_steps:{grad_accum_steps}")
     log0(f"sdp_backends:cudnn=False flash={int(_HAS_FLASH_ATTN)} mem_efficient={int(not _HAS_FLASH_ATTN)} math={int(not _HAS_FLASH_ATTN)}")
     log0(f"attention_mode:gqa num_heads:{args.num_heads} num_kv_heads:{args.num_kv_heads}")
+    log0(f"attn_pattern:{attn_pattern} local_attn_window:{args.local_attn_window}")
     log0(f"tied_embed_lr:{token_lr} matrix_lr:{args.matrix_lr} scalar_lr:{args.scalar_lr}")
     log0(
         f"train_batch_tokens:{args.train_batch_tokens} train_seq_len:{args.train_seq_len} "
@@ -1423,28 +1443,7 @@ def main() -> None:
         quant_blob_disk = f.read()
     quant_decompressed = lzma.decompress(quant_blob_disk)
     quant_state = torch.load(io.BytesIO(quant_decompressed), map_location="cpu", weights_only=False)
-    eval_model = GPT(
-        vocab_size=args.vocab_size,
-        num_layers=args.num_layers,
-        model_dim=args.model_dim,
-        num_heads=args.num_heads,
-        num_kv_heads=args.num_kv_heads,
-        mlp_mult=args.mlp_mult,
-        mlp_hidden=args.mlp_hidden,
-        tied_embed_init_std=args.tied_embed_init_std,
-        logit_softcap=args.logit_softcap,
-        rope_base=args.rope_base,
-        qk_gain_init=args.qk_gain_init,
-        bigram_vocab_size=args.bigram_vocab_size,
-        bigram_dim=args.bigram_dim,
-        xsa_last_n=args.xsa_last_n,
-        partial_rope_dims=args.partial_rope_dims,
-        ln_scale=args.ln_scale,
-        ve_enabled=args.ve_enabled,
-        ve_dim=args.ve_dim,
-        ve_layers=args.ve_layers,
-        negative_slope=args.negative_slope,
-    ).to(device).bfloat16()
+    eval_model = make_gpt().to(device).bfloat16()
     for module in eval_model.modules():
         if isinstance(module, CastedLinear):
             module.float()

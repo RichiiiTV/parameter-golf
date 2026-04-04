@@ -1,6 +1,7 @@
 {
-  "classification": "YELLOW",
+  "classification": "GREEN",
   "env": {
+    "ATTN_PATTERN": "L,L,G,L,L,G,L,L,G,L,G",
     "BIGRAM_DIM": "112",
     "BIGRAM_VOCAB_SIZE": "3072",
     "EMA_DECAY": "0.997",
@@ -18,6 +19,7 @@
     "ITERATIONS": "20000",
     "LN_SCALE": "1",
     "LOADER_SHARDS_PER_RANK": "4",
+    "LOCAL_ATTN_WINDOW": "512",
     "MATRIX_LR": "0.025",
     "MAX_WALLCLOCK_SECONDS": "600",
     "MODEL_DIM": "512",
@@ -48,13 +50,13 @@
   },
   "h100_only": true,
   "hardware": "8xH100-SXM",
-  "lane": "h100_root_pr1060",
-  "notes": "All-global #1060-derived parity/reference lane: 11L/512d root with coprime multi-shard loading, reserved-time full-Hessian GPTQ6 calibration, and the prune-funded BigramHash 3072x112 upgrade but no Gemma-style hybrid attention schedule.",
-  "profile": "h100-root-pr1060-b3072-prune",
-  "promote": false,
-  "purpose": "Keep the all-global #1060-derived lane available as the local parity/reference path while the promoted H100 candidate moves to the Gemma-style hybrid attention follow-up.",
-  "prerequisite": "Use this lane for parity or debugging only after the local #549/#589 truth run at 1.11956668 established the reference baseline; the promoted H100 candidate is configs/h100/root_pr1060_gemma_hybrid_b3072_prune.json.",
+  "lane": "h100_root_pr1060_gemma_hybrid",
+  "notes": "Active promoted lane: #1060-derived 11L/512d root with Gemma-style hybrid attention L,L,G,L,L,G,L,L,G,L,G, reserved-time full-Hessian GPTQ6 calibration, and the same prune-funded BigramHash 3072x112 upgrade.",
+  "profile": "h100-root-pr1060-gemma-hybrid-b3072-prune",
+  "promote": true,
+  "purpose": "Keep the #1060-derived base intact and spend the next architecture delta on a Gemma-style hybrid local/global attention schedule instead of another eval trick or full donor rewrite.",
+  "prerequisite": "Use the existing all-global #1060 config only as the local parity path. Promote this lane only if the hybrid schedule preserves size and timing margins while improving sliding_window_exact over the completed 1.11956668 local reference baseline.",
   "runtime_budget_minutes": 10,
-  "sanity_check_command": "rg -n \"TRAIN_LOADER_MODE|GPTQ_RESERVE_MS|gptq:start reserved_train_data|gptq:calibrated|ttt_\" train_gpt.py",
+  "sanity_check_command": "rg -n \"ATTN_PATTERN|LOCAL_ATTN_WINDOW|TRAIN_LOADER_MODE|GPTQ_RESERVE_MS|gptq:start reserved_train_data|gptq:calibrated|ttt_\" train_gpt.py",
   "success_criteria": "Beat the completed local #589-style reference baseline at 1.11956668 on final sliding_window_exact while staying under the 16,000,000-byte cap and keeping total train-plus-calibration wallclock inside 600 seconds."
 }

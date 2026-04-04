@@ -5,17 +5,17 @@
 - Latest plausible valid open leader: `#1060` at `1.1122` as of March 29, 2026.
 - Active root runner: `train_gpt.py`
 - Completed local truth baseline: `logs/root-pr549-softqat.txt` at `1.11956668`.
-- Active root direction: `#1060`-derived 11-layer root with coprime multi-shard loading, reserved-time full-Hessian GPTQ6, and no TTT.
+- Active root direction: `#1060`-derived 11-layer root with coprime multi-shard loading, reserved-time full-Hessian GPTQ6, and a Gemma-style hybrid local/global attention schedule.
 - Reference baseline snapshot: `snapshots/train_gpt_2026-03-25_pre753_pr549_softqat_root.py`
 - Archived pre-pivot dense-GPTQ snapshot: `snapshots/train_gpt_2026-03-29_pre1060_valid_dense_gptq_root.py`
 - Archived GDN snapshot: `snapshots/train_gpt_2026-03-27_prepivot_pr875_gdn_root.py`
 
 ## Active H100 Candidates
-- Promoted `#1060` follow-up: `configs/h100/root_pr1060_b3072_prune.json`
+- Promoted `#1060` follow-up: `configs/h100/root_pr1060_gemma_hybrid_b3072_prune.json`
 
 ## Main Prediction
 - The accepted `#549` family is now a completed local reference baseline, not an active compute target.
-- The best near-term valid record chance is a `#1060`-derived lane with one byte-funded delta: `BigramHash(3072,112)` funded by selective `±1` export pruning.
+- The best near-term valid record chance is a `#1060`-derived lane that keeps the prune-funded `BigramHash(3072,112)` delta and adds a Gemma-style hybrid attention schedule `L,L,G,L,L,G,L,L,G,L,G`.
 - Eval-cache / n-gram lanes remain archived pending rule clarification from OpenAI.
 - The GDN branch is archived after the 1xH100 proxy landed far off-family.
 - `#1047`, `#1056`, and `#875` are not active valid targets for this repo.
