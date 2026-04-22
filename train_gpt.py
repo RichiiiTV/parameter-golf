@@ -75,9 +75,7 @@ class Hyperparameters:
     ve_dim = int(os.environ.get("VE_DIM", 128))
     ve_layers = os.environ.get("VE_LAYERS", "9,10")
     negative_slope = float(os.environ.get("NEGATIVE_SLOPE", 0.5))
-    attn_pattern = os.environ.get("ATTN_PATTERN", "")
-    local_attn_window = int(os.environ.get("LOCAL_ATTN_WINDOW", 512))
-    train_loader_mode = os.environ.get("TRAIN_LOADER_MODE", "coprime_multi_shard")
+    shared_head_dim = int(os.environ.get("SHARED_HEAD_DIM", 0))
     loader_shards_per_rank = int(os.environ.get("LOADER_SHARDS_PER_RANK", 4))
     gptq_enabled = bool(int(os.environ.get("GPTQ_ENABLED", "1")))
     gptq_bits = int(os.environ.get("GPTQ_BITS", 6))
@@ -486,52 +484,6 @@ def load_data_shard(file: Path) -> Tensor:
     if tokens_np.size != num_tokens:
         raise ValueError(f"Short read for {file}")
     return torch.from_numpy(tokens_np.astype(np.uint16, copy=False))
-class TokenStream:
-    def __init__(self, pattern: str, shuffle: bool = False, seed: int = 1337):
-        self.files = [Path(p) for p in sorted(glob.glob(pattern))]
-        if not self.files:
-            raise FileNotFoundError(f"No files found for pattern: {pattern}")
-        if shuffle:
-            rng = random.Random(seed)
-            rng.shuffle(self.files)
-        self.file_idx = 0
-        self.tokens = load_data_shard(self.files[0])
-        self.pos = 0
-    def _advance_file(self) -> None:
-        self.file_idx = (self.file_idx + 1) % len(self.files)
-        self.tokens = load_data_shard(self.files[self.file_idx])
-        self.pos = 0
-    def take(self, n: int) -> Tensor:
-        chunks: list[Tensor] = []
-        remaining = n
-        while remaining > 0:
-            avail = self.tokens.numel() - self.pos
-            if avail <= 0:
-                self._advance_file()
-                continue
-            k = min(remaining, avail)
-            chunks.append(self.tokens[self.pos : self.pos + k])
-            self.pos += k
-            remaining -= k
-        return chunks[0] if len(chunks) == 1 else torch.cat(chunks)
-class SequentialTokenLoader:
-    mode = "sequential"
-    def __init__(self, pattern: str, rank: int, world_size: int, device: torch.device, seed: int):
-        self.rank = rank
-        self.world_size = world_size
-        self.device = device
-        self.stream = TokenStream(pattern, shuffle=False, seed=seed)
-    def next_batch(self, global_tokens: int, seq_len: int, grad_accum_steps: int) -> tuple[Tensor, Tensor]:
-        local_tokens = global_tokens // (self.world_size * grad_accum_steps)
-        per_rank_span = local_tokens + 1
-        chunk = self.stream.take(per_rank_span * self.world_size)
-        start = self.rank * per_rank_span
-        local = chunk[start : start + per_rank_span].to(dtype=torch.int64)
-        x = local[:-1].reshape(-1, seq_len)
-        y = local[1:].reshape(-1, seq_len)
-        return x.to(self.device, non_blocking=True), y.to(self.device, non_blocking=True)
-    def describe(self) -> str:
-        return "mode:sequential"
 class CoprimeMultiShardLoader:
     mode = "coprime_multi_shard"
     def __init__(self, pattern: str, rank: int, world_size: int, device: torch.device, seed: int, shards_per_rank: int):
@@ -587,18 +539,14 @@ class CoprimeMultiShardLoader:
     def describe(self) -> str:
         return f"mode:coprime_multi_shard shards_per_rank:{self.shards_per_rank} shard_stride:{self.shard_stride}"
 def build_train_loader(args: Hyperparameters, rank: int, world_size: int, device: torch.device):
-    if args.train_loader_mode == "sequential":
-        return SequentialTokenLoader(args.train_files, rank, world_size, device, seed=args.seed)
-    if args.train_loader_mode == "coprime_multi_shard":
-        return CoprimeMultiShardLoader(
-            args.train_files,
-            rank,
-            world_size,
-            device,
-            seed=args.seed,
-            shards_per_rank=args.loader_shards_per_rank,
-        )
-    raise ValueError(f"Unknown TRAIN_LOADER_MODE={args.train_loader_mode}")
+    return CoprimeMultiShardLoader(
+        args.train_files,
+        rank,
+        world_size,
+        device,
+        seed=args.seed,
+        shards_per_rank=args.loader_shards_per_rank,
+    )
 class RMSNorm(nn.Module):
     def __init__(self, eps: float | None = None):
         super().__init__()
@@ -664,6 +612,7 @@ class CausalSelfAttention(nn.Module):
         num_kv_heads: int,
         rope_base: float,
         qk_gain_init: float,
+        shared_head_dim: int = 0,
     ):
         super().__init__()
         if dim % num_heads != 0:
@@ -673,8 +622,13 @@ class CausalSelfAttention(nn.Module):
         self.num_heads = num_heads
         self.num_kv_heads = num_kv_heads
         self.head_dim = dim // num_heads
+        if shared_head_dim < 0 or shared_head_dim > self.head_dim:
+            raise ValueError(
+                f"shared_head_dim must be in [0, {self.head_dim}], got {shared_head_dim}"
+            )
         if self.head_dim % 2 != 0:
             raise ValueError("head_dim must be even for RoPE")
+        self.shared_head_dim = shared_head_dim
         kv_dim = self.num_kv_heads * self.head_dim
         self.c_q = CastedLinear(dim, dim, bias=False)
         self.c_k = CastedLinear(dim, kv_dim, bias=False)
@@ -686,17 +640,13 @@ class CausalSelfAttention(nn.Module):
         rope_dim = self.head_dim
         self.rotary = Rotary(rope_dim, base=rope_base, train_seq_len=1024)
         self.use_xsa = False
-        self.attn_mode = "global"
-        self.local_attn_window = 0
-        self._local_mask: Tensor | None = None
-        self._local_mask_seq_len = 0
-    def _get_local_mask(self, seqlen: int, device: torch.device) -> Tensor:
-        if self._local_mask is None or self._local_mask_seq_len != seqlen or self._local_mask.device != device:
-            idx = torch.arange(seqlen, device=device)
-            dist = idx[:, None] - idx[None, :]
-            self._local_mask = (dist >= 0) & (dist < self.local_attn_window)
-            self._local_mask_seq_len = seqlen
-        return self._local_mask
+    def _tie_shared_weight(self, weight: Tensor, n_heads: int) -> Tensor:
+        if self.shared_head_dim <= 0:
+            return weight
+        weight_heads = weight.reshape(n_heads, self.head_dim, -1)
+        shared = weight_heads[:, -self.shared_head_dim:, :].mean(dim=0, keepdim=True)
+        shared = shared.expand(n_heads, -1, -1)
+        return torch.cat((weight_heads[:, :-self.shared_head_dim, :], shared), dim=1).reshape_as(weight)
     def _xsa_efficient(self, y: Tensor, v: Tensor) -> Tensor:
         B, T, H, D = y.shape
         Hkv = v.size(-2)
@@ -707,8 +657,14 @@ class CausalSelfAttention(nn.Module):
         return (y_g - proj).reshape(B, T, H, D)
     def forward(self, x: Tensor, v_embed: Tensor | None = None) -> Tensor:
         bsz, seqlen, dim = x.shape
-        q = self.c_q(x).reshape(bsz, seqlen, self.num_heads, self.head_dim).transpose(1, 2)
-        k = self.c_k(x).reshape(bsz, seqlen, self.num_kv_heads, self.head_dim).transpose(1, 2)
+        if self.shared_head_dim > 0:
+            q_weight = self._tie_shared_weight(self.c_q.weight, self.num_heads)
+            k_weight = self._tie_shared_weight(self.c_k.weight, self.num_kv_heads)
+            q = F.linear(x, q_weight.to(dtype=x.dtype)).reshape(bsz, seqlen, self.num_heads, self.head_dim).transpose(1, 2)
+            k = F.linear(x, k_weight.to(dtype=x.dtype)).reshape(bsz, seqlen, self.num_kv_heads, self.head_dim).transpose(1, 2)
+        else:
+            q = self.c_q(x).reshape(bsz, seqlen, self.num_heads, self.head_dim).transpose(1, 2)
+            k = self.c_k(x).reshape(bsz, seqlen, self.num_kv_heads, self.head_dim).transpose(1, 2)
         v_raw = self.c_v(x)
         if v_embed is not None:
             v_raw = v_raw + v_embed.to(dtype=v_raw.dtype)
@@ -723,15 +679,12 @@ class CausalSelfAttention(nn.Module):
             q_fa = q.transpose(1, 2)
             k_fa = k.transpose(1, 2)
             v_fa = v.transpose(1, 2)
-            y = flash_attn_func(
-                q_fa, k_fa, v_fa, causal=True,
-                window_size=(self.local_attn_window - 1, 0) if self.attn_mode == "local" else (-1, -1),
-            )
+            y = flash_attn_func(q_fa, k_fa, v_fa, causal=True)
         else:
             y = F.scaled_dot_product_attention(
                 q, k, v,
-                attn_mask=None if self.attn_mode == "global" else self._get_local_mask(seqlen, x.device),
-                is_causal=self.attn_mode == "global",
+                attn_mask=None,
+                is_causal=True,
                 enable_gqa=(self.num_kv_heads != self.num_heads),
             )
             y = y.transpose(1, 2)
@@ -804,13 +757,14 @@ class Block(nn.Module):
         mlp_mult: int,
         rope_base: float,
         qk_gain_init: float,
+        shared_head_dim: int = 0,
         mlp_hidden: int = 0,
         negative_slope: float = 0.5,
     ):
         super().__init__()
         self.attn_norm = RMSNorm()
         self.mlp_norm = RMSNorm()
-        self.attn = CausalSelfAttention(dim, num_heads, num_kv_heads, rope_base, qk_gain_init)
+        self.attn = CausalSelfAttention(dim, num_heads, num_kv_heads, rope_base, qk_gain_init, shared_head_dim=shared_head_dim)
         self.mlp = MLP(dim, mlp_mult, mlp_hidden, negative_slope=negative_slope)
         self.attn_scale = nn.Parameter(torch.ones(dim, dtype=torch.float32))
         self.mlp_scale = nn.Parameter(torch.ones(dim, dtype=torch.float32))
@@ -847,8 +801,7 @@ class GPT(nn.Module):
         ve_dim: int = 128,
         ve_layers: str = "9,10",
         negative_slope: float = 0.5,
-        attn_pattern: str = "",
-        local_attn_window: int = 512,
+        shared_head_dim: int = 0,
     ):
         super().__init__()
         if logit_softcap <= 0.0:
@@ -874,6 +827,7 @@ class GPT(nn.Module):
                     mlp_mult,
                     rope_base,
                     qk_gain_init,
+                    shared_head_dim=shared_head_dim,
                     mlp_hidden=mlp_hidden,
                     negative_slope=negative_slope,
                 )
@@ -889,11 +843,6 @@ class GPT(nn.Module):
         else:
             self.ve_shared = None
             self.ve_layer_scales = nn.ParameterList()
-        attn_modes = [part.strip().lower() for part in attn_pattern.split(",") if part.strip()] if attn_pattern else []
-        if not attn_modes:
-            attn_modes = ["global"] * num_layers
-        if len(attn_modes) != num_layers:
-            raise ValueError(f"ATTN_PATTERN must have {num_layers} entries, got {len(attn_modes)}")
         for i in range(num_layers):
             if xsa_last_n > 0 and i >= num_layers - xsa_last_n:
                 self.blocks[i].attn.use_xsa = True
@@ -902,11 +851,6 @@ class GPT(nn.Module):
                 self.blocks[i].attn.rotary = Rotary(partial_rope_dims, base=rope_base, train_seq_len=1024)
             if ln_scale:
                 self.blocks[i].ln_scale_factor = 1.0 / math.sqrt(i + 1)
-            mode = attn_modes[i]
-            if mode not in {"g", "global", "l", "local"}:
-                raise ValueError(f"Unsupported attention mode {mode!r} in ATTN_PATTERN")
-            self.blocks[i].attn.attn_mode = "local" if mode.startswith("l") else "global"
-            self.blocks[i].attn.local_attn_window = local_attn_window
         self.final_norm = RMSNorm()
         self._init_weights()
     def _get_ve(self, layer_idx: int, input_ids: Tensor, cache: dict[str, Tensor]) -> Tensor | None:
@@ -955,6 +899,15 @@ class GPT(nn.Module):
         return F.cross_entropy(self._project_logits(x).float(), targets, reduction="mean")
     def get_logits(self, input_ids: Tensor) -> Tensor:
         return self._project_logits(self._hidden(input_ids))
+def bake_shared_attention(model: GPT) -> None:
+    with torch.no_grad():
+        for block in model.blocks:
+            attn = block.attn
+            if attn.shared_head_dim <= 0:
+                continue
+            attn.c_q.weight.copy_(attn._tie_shared_weight(attn.c_q.weight, attn.num_heads))
+            attn.c_k.weight.copy_(attn._tie_shared_weight(attn.c_k.weight, attn.num_kv_heads))
+            attn.shared_head_dim = 0
 def eval_val_sliding(
     args, base_model: nn.Module, rank: int, world_size: int, device: torch.device,
     val_tokens: Tensor, base_bytes_lut: Tensor, has_leading_space_lut: Tensor,
@@ -1188,7 +1141,7 @@ def main() -> None:
             bigram_vocab_size=args.bigram_vocab_size, bigram_dim=args.bigram_dim, xsa_last_n=args.xsa_last_n,
             partial_rope_dims=args.partial_rope_dims, ln_scale=args.ln_scale, ve_enabled=args.ve_enabled,
             ve_dim=args.ve_dim, ve_layers=args.ve_layers, negative_slope=args.negative_slope,
-            attn_pattern=args.attn_pattern, local_attn_window=args.local_attn_window,
+            shared_head_dim=args.shared_head_dim,
         )
     base_model = make_gpt().to(device).bfloat16()
     for module in base_model.modules():
@@ -1238,12 +1191,11 @@ def main() -> None:
     n_params = sum(p.numel() for p in base_model.parameters())
     log0(f"model_params:{n_params}")
     xsa_layers = [i for i, b in enumerate(base_model.blocks) if b.attn.use_xsa]
-    attn_pattern = ",".join("L" if b.attn.attn_mode == "local" else "G" for b in base_model.blocks)
     log0(f"XSA:last_{args.xsa_last_n} active_layers:{xsa_layers}")
     log0(f"world_size:{world_size} grad_accum_steps:{grad_accum_steps}")
     log0(f"sdp_backends:cudnn=False flash={int(_HAS_FLASH_ATTN)} mem_efficient={int(not _HAS_FLASH_ATTN)} math={int(not _HAS_FLASH_ATTN)}")
-    log0(f"attention_mode:gqa num_heads:{args.num_heads} num_kv_heads:{args.num_kv_heads}")
-    log0(f"attn_pattern:{attn_pattern} local_attn_window:{args.local_attn_window}")
+    log0(f"attention_mode:global_gqa num_heads:{args.num_heads} num_kv_heads:{args.num_kv_heads}")
+    log0(f"shared_head_dim:{args.shared_head_dim}")
     log0(f"tied_embed_lr:{token_lr} matrix_lr:{args.matrix_lr} scalar_lr:{args.scalar_lr}")
     log0(f"train_batch_tokens:{args.train_batch_tokens} train_seq_len:{args.train_seq_len} iterations:{args.iterations} warmup_steps:{args.warmup_steps} max_wallclock_seconds:{args.max_wallclock_seconds:.3f}")
     log0(f"seed:{args.seed}")
@@ -1413,6 +1365,7 @@ def main() -> None:
         )
     total_train_plus_calibration_ms = training_time_ms + calibration_ms
     log0(f"train_plus_calibration_ms:{total_train_plus_calibration_ms:.0f}")
+    bake_shared_attention(base_model)
     if master_process:
         torch.save(base_model.state_dict(), "final_model.pt")
         model_bytes = os.path.getsize("final_model.pt")
@@ -1452,6 +1405,7 @@ def main() -> None:
             module.float()
     restore_low_dim_params_to_fp32(eval_model)
     eval_model.load_state_dict(dequantize_state_dict_for_export(quant_state), strict=True)
+    bake_shared_attention(eval_model)
     compiled_eval = torch.compile(eval_model, dynamic=False, fullgraph=True)
     torch.cuda.synchronize()
     t_qeval = time.perf_counter()

@@ -1,28 +1,20 @@
 # Top Candidates
 
-## Valid Mainline
-- Accepted merged frontier: `#549` / `2026-03-23_LeakyReLU_LegalTTT_ParallelMuon` at `val_bpb=1.1194`.
-- Latest plausible valid open leader: `#1060` at `1.1122` as of March 29, 2026.
+## Active Baseline
 - Active root runner: `train_gpt.py`
-- Completed local truth baseline: `logs/root-pr549-softqat.txt` at `1.11956668`.
-- Active root direction: `#1060`-derived 11-layer root with coprime multi-shard loading, reserved-time full-Hessian GPTQ6, and a Gemma-style hybrid local/global attention schedule.
-- Reference baseline snapshot: `snapshots/train_gpt_2026-03-25_pre753_pr549_softqat_root.py`
-- Archived pre-pivot dense-GPTQ snapshot: `snapshots/train_gpt_2026-03-29_pre1060_valid_dense_gptq_root.py`
-- Archived GDN snapshot: `snapshots/train_gpt_2026-03-27_prepivot_pr875_gdn_root.py`
+- Runnable H100 baseline: `configs/h100/root_pr1060_shd_b3072_prune.json`
+- Directional proxy: `configs/h100/root_pr1060_shd_proxy_1xh100.json`
+- Local sanity: `configs/local/root_pr1060_shd_sanity.json`
+- Preserved local reference baseline: `logs/root-pr549-softqat.txt` at `1.11956668`
+- Preserved April 22 snapshots: `snapshots/train_gpt_2026-04-22_pre_shd_pivot_root.py` and `snapshots/train_gpt_2026-04-22_pre_shd_only_prune_root.py`
 
-## Active H100 Candidates
-- Promoted `#1060` follow-up: `configs/h100/root_pr1060_gemma_hybrid_b3072_prune.json`
+## April 22 Frontier Check
+- Accepted merged record remains `#549` / `2026-03-23_LeakyReLU_LegalTTT_ParallelMuon` at `1.1194`.
+- Latest open upstream leaders checked on April 22, 2026: `#1767` at `1.07209`, `#1765` at `1.07266`, `#1775` at `1.07285`, `#1776` at `1.08083`, and `#1771` at `1.06513` with legality pending.
+- Upstream SHD-only reference: `#1774` at `1.09813`.
+- Verdict: the current SHD-only SP1024 root is a clean local baseline, not a plausible global SOTA path.
 
-## Main Prediction
-- The accepted `#549` family is now a completed local reference baseline, not an active compute target.
-- The best near-term valid record chance is a `#1060`-derived lane that keeps the prune-funded `BigramHash(3072,112)` delta and adds a Gemma-style hybrid attention schedule `L,L,G,L,L,G,L,L,G,L,G`.
-- Eval-cache / n-gram lanes remain archived pending rule clarification from OpenAI.
-- The GDN branch is archived after the 1xH100 proxy landed far off-family.
-- `#1047`, `#1056`, and `#875` are not active valid targets for this repo.
-- The new root only stays valid if the reserved-time train-data calibration starts before the logged GPTQ reserve boundary and finishes inside the same `600s` wallclock.
-
-## Ranking Policy
-- Rank active candidates by lower final post-export `val_bpb` on the active lane's final metric.
-- Require `bytes_total < 16,000,000`.
-- Require H100 truth before promotion.
-- Do not spend more H100 on already-done `#549` / `#589` donor replay lanes or on an exact `#1060` donor replay.
+## Current Use
+- Use the baseline lane to measure the cleaned root under the existing byte and wallclock rules.
+- Do not describe this repo as carrying a promoted frontier lane.
+- Do not spend record-intent H100 compute until a separate frontier pivot is planned.

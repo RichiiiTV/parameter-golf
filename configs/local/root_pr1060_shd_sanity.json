@@ -1,7 +1,6 @@
 {
   "classification": "YELLOW",
   "env": {
-    "ATTN_PATTERN": "L,L,G,L,L,G,L,L,G,L,G",
     "BIGRAM_DIM": "112",
     "BIGRAM_VOCAB_SIZE": "3072",
     "EMA_DECAY": "0.997",
@@ -18,7 +17,6 @@
     "ITERATIONS": "16",
     "LN_SCALE": "1",
     "LOADER_SHARDS_PER_RANK": "2",
-    "LOCAL_ATTN_WINDOW": "512",
     "MAX_WALLCLOCK_SECONDS": "8",
     "MODEL_DIM": "512",
     "MLP_HIDDEN": "1536",
@@ -28,9 +26,9 @@
     "NUM_LAYERS": "11",
     "PARTIAL_ROPE_DIMS": "16",
     "SELECTIVE_PRUNE_ENABLED": "0",
+    "SHARED_HEAD_DIM": "16",
     "TIED_EMBED_LR": "0.035",
     "TRAIN_BATCH_TOKENS": "131072",
-    "TRAIN_LOADER_MODE": "coprime_multi_shard",
     "TRAIN_SEQ_LEN": "1024",
     "VAL_LOSS_EVERY": "0",
     "VE_DIM": "128",
@@ -41,5 +39,5 @@
     "XSA_LAST_N": "11"
   },
   "h100_only": false,
-  "notes": "Local-only hybrid-attention sanity lane for the Gemma-style #1060 follow-up. Uses the same 3072x112 bigram and hybrid schedule as the promoted lane but keeps calibration and runtime tiny."
+  "notes": "Local-only SHD sanity lane for the active #1060 root. Uses the same 3072x112 bigram and SHARED_HEAD_DIM=16 as the promoted lane while keeping selective prune off so smoke checks stay architecture-only."
 }

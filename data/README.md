@@ -1,17 +1,15 @@
 # Data Workflows
 
-This directory contains the dataset download helpers and export scripts used for the challenge.
+This directory contains the active SP1024 dataset layout for the cleaned baseline repo.
 
 Canonical local layout:
-- `data/datasets/<dataset_name>/`
+- `data/datasets/fineweb10B_sp1024/`
 - `data/tokenizers/`
 - `data/manifest.json`
-- `data/docs_selected.jsonl`
-- `data/docs_selected.source_manifest.json`
 
 ## Downloading Published Data
 
-Download the cached FineWeb export for a tokenizer variant with:
+Download the cached FineWeb SP1024 export with:
 
 ```bash
 python3 data/cached_challenge_fineweb.py --variant sp1024
@@ -37,30 +35,3 @@ python3 data/cached_challenge_fineweb.py --variant sp1024 --train-shards 100
 Validation is always downloaded in full from the fixed `fineweb_val_*` split. Training on the first `N` train shards means training on the prefix of the same frozen shuffled export, so the data order stays aligned with the baseline for that tokenizer family.
 
 The default published repo is `willdepueoai/parameter-golf`, with the export rooted under the repo subdirectory `datasets/`.
-
-## Rebuilding Tokenizers From Published Docs
-
-To retrain a tokenizer or re-export shards from exactly the same selected documents, run the standalone retokenizer against the published docs cache:
-
-```bash
-python3 data/download_hf_docs_and_tokenize.py \
-  --repo-id your-hf-username/your-dataset-repo \
-  --remote-root your_50B_export_root \
-  --output-root /tmp/my_custom_tokenizer_export \
-  --tokenizer-config ./data/tokenizer_specs.json
-```
-
-The sidecar `docs_selected.source_manifest.json` includes `docs_sha256`, so users can verify they are rebuilding from the exact same document list and order as the baseline export.
-
-## Useful Knobs
-
-For CPU-heavy exports, useful knobs are:
-
-```bash
-MATCHED_FINEWEB_SP_BATCH_SIZE=2048
-MATCHED_FINEWEB_TOKENIZER_THREADS=16
-MATCHED_FINEWEB_TIKTOKEN_THREADS=16
-MATCHED_FINEWEB_GPT2_DECODE_BATCH_SIZE=512
-```
-
-These control batched tokenizer encoding during shard export, tokenizer thread count, tiktoken thread count, and batched GPT-2 decode for the blobstore docs-cache path.

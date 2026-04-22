@@ -4,11 +4,10 @@
 # Frontier
 - Accepted record source of truth: upstream `README.md` plus accepted `records/`.
 - Current accepted top merged record: `#549` / `2026-03-23_LeakyReLU_LegalTTT_ParallelMuon` at `1.1194`.
-- Latest plausible valid open leader to port: `#1060` at `1.1122` as of March 29, 2026.
-- `#753` / eval-cache work remains archived pending rule clarification from issue `#677`.
-- `#875` / pure-neural GDN work is archived as a failed low-probability branch after the 1xH100 proxy landed far off-family.
+- Latest upstream open leaders checked on April 22, 2026 are `#1767` at `1.07209`, `#1765` at `1.07266`, `#1775` at `1.07285`, `#1776` at `1.08083`, and `#1771` at `1.06513` with legality pending.
+- Upstream SHD-only reference is `#1774` at `1.09813`; that portable delta landed in root, but the current repo remains materially behind the active SP8192 + TTT frontier.
 - Completed local reference baseline: `#589`-style late soft-round QAT at `1.11956668` in `logs/root-pr549-softqat.txt`.
-- Active root path is now a `#1060`-derived 11-layer `#549`-family scaffold with coprime multi-shard loading, reserved-time full-Hessian GPTQ6, and a Gemma-style hybrid local/global attention schedule.
+- Active root path is a clean SP1024 baseline: a `#1060`-derived 11-layer `#549`-family scaffold with coprime multi-shard loading, reserved-time full-Hessian GPTQ6, and SHD-tied Q/K tails with `SHARED_HEAD_DIM=16`.
 
 # Hard constraints
 - Never auto-run H100 jobs.
@@ -21,41 +20,41 @@
 # Workflow
 - H100-only, manual-only.
 - Root `train_gpt.py` is the canonical runner.
-- Frozen snapshots are allowed as fallbacks, but active work happens in root.
+- Frozen snapshots are preserved history, but active work happens in root.
 - `flash-attn` is optional in code and recommended only in the H100 environment.
 
 # GREEN / YELLOW / RED
-- `GREEN`: `#1060`-derived root with reserved-time full-Hessian GPTQ6, prune-funded `BigramHash(3072,112)`, and Gemma-style hybrid attention `L,L,G,L,L,G,L,L,G,L,G`.
-- `YELLOW`: completed `#549` / `#589` truth runs are reference-only; exact all-global `#1060` donor parity is local-sanity-only, not an H100 target.
-- `RED`: eval caches, two-pass rescoring, tokenizer changes without proof, donor replay runs after a completed truth run, oversized artifacts, seed brute force, auto-launched H100 jobs, or any calibration that starts after the reserved GPTQ wallclock boundary.
+- `GREEN`: none. This repo does not currently carry a frontier-credible global SOTA lane.
+- `YELLOW`: the current SHD/SP1024 root is a clean runnable baseline only; completed `#549` / `#589` truth runs and the preserved April 22 snapshots are reference-only.
+- `RED`: eval caches, two-pass rescoring, tokenizer changes without proof, donor replay runs after a completed local truth run, oversized artifacts, seed brute force, auto-launched H100 jobs, or any calibration that starts after the reserved GPTQ wallclock boundary.
 
 # Current hypotheses
 - The completed `#549` family is saturated on bytes locally: the completed soft-QAT run used `15,845,667` bytes and did not beat `#549`.
-- The highest expected-value next lane is a `#1060`-derived 11-layer scaffold with one byte-funded delta and a Gemma-style hybrid local/global attention schedule, not another replay of the accepted donor family.
-- `#1047`, `#1056`, and `#875` are not active valid targets for this repo.
+- The current SHD/SP1024 root is useful as a clean baseline and regression target, not as a plausible global SOTA path.
+- Any real frontier chase now likely requires a separate SP8192 + legal-TTT pivot that is not present in this repo.
+- `#1047`, `#1056`, `#753`, and `#875` are not active targets for this cleaned baseline repo.
 - Reserved-time train-data calibration is acceptable only if it is explicitly logged and the total train-plus-calibration wallclock remains inside `600s`.
-- The promoted lane keeps `BigramHash(3072,112)` funded by selective `±1` export pruning and adds only the Gemma-style hybrid schedule `L,L,G,L,L,G,L,L,G,L,G`; no other eval mechanism is active.
+- The active baseline keeps `BigramHash(3072,112)` funded by selective `+/-1` export pruning and adds only SHD-tied Q/K tails with `SHARED_HEAD_DIM=16`; no other eval mechanism is active.
 
 # Current blockers
-- No H100 truth run has been executed from the `#1060`-derived root.
-- The first H100 truth run still needs to confirm whether the reserved-time full-Hessian GPTQ path preserves enough quality and byte headroom to beat the completed local reference baseline.
+- No H100 truth run has been executed from the cleaned SHD/SP1024 root.
+- The repo currently has no frontier-credible global SOTA lane; a separate pivot would be needed before spending H100 with record intent.
 
 # Active candidates
-- `configs/h100/root_pr1060_gemma_hybrid_b3072_prune.json`
-- `configs/h100/root_pr1060_gemma_hybrid_proxy_1xh100.json`
-- `configs/h100/root_pr1060_b3072_prune.json`
-- `configs/local/root_pr1060_base_sanity.json`
-- `configs/local/root_pr1060_gemma_hybrid_sanity.json`
+- `configs/h100/root_pr1060_shd_b3072_prune.json`
+- `configs/h100/root_pr1060_shd_proxy_1xh100.json`
+- `configs/local/root_pr1060_shd_sanity.json`
+
+# Historical references
 - `logs/root-pr549-softqat.txt`
-- `snapshots/train_gpt_2026-03-29_pre1060_valid_dense_gptq_root.py`
-- `snapshots/train_gpt_2026-03-25_pre753_pr549_softqat_root.py`
-- `snapshots/train_gpt_2026-03-27_prepivot_pr875_gdn_root.py`
+- `snapshots/train_gpt_2026-04-22_pre_shd_pivot_root.py`
+- `snapshots/train_gpt_2026-04-22_pre_shd_only_prune_root.py`
 
 # Run ladder
-- Run 1: Gemma-style hybrid `#1060`-derived promoted lane on H100 via `configs/h100/root_pr1060_gemma_hybrid_b3072_prune.json`
-- Optional directional proxy only: `configs/h100/root_pr1060_gemma_hybrid_proxy_1xh100.json`
-- If the base misses the size or timing gate, stop and adjust the root; do not spend another run on `#549`/`#589` or exact `#1060` replay lanes.
-- Before any H100 run, verify the pod has the new root: `train_gpt.py` should contain `ATTN_PATTERN`, `TRAIN_LOADER_MODE`, `GPTQ_RESERVE_MS`, and `gptq:start reserved_train_data`, and should not contain `ttt_`.
+- Run 1: clean SHD/SP1024 baseline characterization on H100 via `configs/h100/root_pr1060_shd_b3072_prune.json`
+- Optional directional proxy only: `configs/h100/root_pr1060_shd_proxy_1xh100.json`
+- Do not interpret a successful run as a global SOTA claim; use it only to measure the current root against the preserved local reference baseline.
+- Before any H100 run, verify the pod has the new root: `train_gpt.py` should contain `SHARED_HEAD_DIM`, `GPTQ_RESERVE_MS`, and `gptq:start reserved_train_data`, and should not contain any removed fallback knobs.
 
 # Rules for code changes
 - Keep record-critical logic in root `train_gpt.py`.

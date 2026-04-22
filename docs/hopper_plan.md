@@ -1,31 +1,27 @@
 # Hopper Plan
 
-Active valid frontier for this pass:
+Current runnable baseline for this pass:
 - accepted merged record: `#549`
-- latest plausible valid open leader to port: `#1060`
-- completed local reference baseline: `logs/root-pr549-softqat.txt` at `1.11956668`
-- reference baseline snapshot: `snapshots/train_gpt_2026-03-25_pre753_pr549_softqat_root.py`
-- archived pre-pivot dense-GPTQ snapshot: `snapshots/train_gpt_2026-03-29_pre1060_valid_dense_gptq_root.py`
-- archived GDN snapshot: `snapshots/train_gpt_2026-03-27_prepivot_pr875_gdn_root.py`
-- active root delta: `#1060`-derived 11-layer scaffold with reserved-time full-Hessian GPTQ6, a prune-funded `BigramHash(3072,112)` upgrade, and Gemma-style hybrid attention `L,L,G,L,L,G,L,L,G,L,G`
+- preserved local reference baseline: `logs/root-pr549-softqat.txt` at `1.11956668`
+- preserved April 22 snapshots: `snapshots/train_gpt_2026-04-22_pre_shd_pivot_root.py` and `snapshots/train_gpt_2026-04-22_pre_shd_only_prune_root.py`
+- active root delta: `#1060`-derived 11-layer scaffold with reserved-time full-Hessian GPTQ6, a prune-funded `BigramHash(3072,112)` upgrade, and SHD-tied Q/K tails with `SHARED_HEAD_DIM=16`
+- strict frontier verdict on April 22, 2026: this root is not a plausible global SOTA path against the latest open SP8192 + TTT leaders
 
 ## Run Order
-- Run 1: Gemma-style hybrid `#1060`-derived promoted lane
-- Optional proxy only: `configs/h100/root_pr1060_gemma_hybrid_proxy_1xh100.json` on one H100 if you need a cheap directional read; do not treat it as timing or legality proof for the 8x lane.
+- Run 1: SHD/SP1024 baseline characterization
+- Optional proxy only: `configs/h100/root_pr1060_shd_proxy_1xh100.json` on one H100 if you need a cheap directional read; do not treat it as timing, legality, or frontier proof for the 8x lane.
 
 ## Run 1
-- Goal: keep the strongest plausible valid open `#1060` family intact, then spend exactly one architecture delta on Gemma-style hybrid local/global attention while preserving the prune-funded `BigramHash(3072,112)` follow-up.
-- Command generation: `py -3.11 scripts/prepare_h100_run.py configs/h100/root_pr1060_gemma_hybrid_b3072_prune.json`
-- Success criteria: beat the completed `#589`-style reference baseline of `1.11956668`, stay under `16,000,000` bytes, keep total train-plus-calibration wallclock inside `600s`, and keep the final record-facing metric on `sliding_window_exact`.
-- Risk: full-Hessian reserved-time GPTQ may consume more of the 600s budget than the retired in-training collector lane.
-- Pod sanity check: `rg -n "ATTN_PATTERN|LOCAL_ATTN_WINDOW|TRAIN_LOADER_MODE|GPTQ_RESERVE_MS|gptq:start reserved_train_data|gptq:calibrated|ttt_" train_gpt.py`
-- Timing expectation: unknown until the first H100 truth run; no second H100 lane is active until this base lands cleanly.
+- Goal: measure the cleaned SHD/SP1024 root cleanly on H100 without claiming frontier status.
+- Command generation: `python scripts/prepare_h100_run.py configs/h100/root_pr1060_shd_b3072_prune.json`
+- Success criteria: stay under `16,000,000` bytes, keep total train-plus-calibration wallclock inside `600s`, and measure the gap versus the completed `1.11956668` local reference baseline on `sliding_window_exact`.
+- Risk: full-Hessian reserved-time GPTQ may consume more of the `600s` budget than the retired in-training collector lane.
+- Pod sanity check: `rg -n "SHARED_HEAD_DIM|GPTQ_RESERVE_MS|gptq:start reserved_train_data|gptq:calibrated|ttt_" train_gpt.py`
+- Timing expectation: unknown until the first H100 truth run; do not spend record-intent H100 compute from this repo before a separate frontier pivot exists.
 
 ## Notes
-- `#753` / eval-cache / hybrid work remains archived pending rule clarification and is not part of the active record ladder.
-- The `#875` GDN branch is archived after the 1xH100 proxy landed far off-family and did not justify more scarce H100 runs.
-- `#1047` and `#1056` are excluded from the active ladder for validity reasons; `#875` is excluded because the reported score is not trustworthy.
-- Tokenizer WIP is archived for this pass and should not be mixed into the active ladder.
-- The completed `#549` / `#589` local truth run is reference-only now; do not spend more H100 compute replaying accepted donor PRs.
-- Exact `#1060` donor parity is a local sanity lane only; do not spend an H100 run on the pure donor replay.
+- Latest upstream open leaders checked on April 22, 2026 are `#1767`, `#1765`, `#1775`, `#1776`, and `#1771`; the current repo does not implement those frontier stacks.
+- Upstream SHD-only `#1774` validates the portability of SHD as a compression trick, but it still trails the open SP8192 + TTT frontier materially.
+- The completed `#549` / `#589` local truth run is reference-only now.
+- The active root no longer carries runnable fallback configs; use the preserved April 22 snapshots only for historical inspection.
 - `flash-attn` remains optional and cluster-side.
