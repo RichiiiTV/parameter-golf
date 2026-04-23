@@ -1,11 +1,10 @@
+from __future__ import annotations
+
 import argparse
 import json
 import os
 import shutil
 from pathlib import Path
-
-from huggingface_hub import hf_hub_download
-
 
 REPO_ID = os.environ.get("MATCHED_FINEWEB_REPO_ID", "willdepueoai/parameter-golf")
 REMOTE_ROOT_PREFIX = os.environ.get("MATCHED_FINEWEB_REMOTE_ROOT_PREFIX", "datasets")
@@ -38,6 +37,13 @@ def get(relative_path: str) -> None:
         return
     if destination.is_symlink():
         destination.unlink()
+    try:
+        from huggingface_hub import hf_hub_download
+    except ImportError as exc:
+        raise RuntimeError(
+            "huggingface_hub is required to download missing dataset/tokenizer files. "
+            "Install it with `pip install huggingface-hub` or use the prepared H100 image."
+        ) from exc
 
     remote_path = Path(relative_path)
     cached_path = Path(
@@ -101,8 +107,8 @@ def build_parser() -> argparse.ArgumentParser:
     )
     parser.add_argument(
         "--variant",
-        default="sp1024",
-        help="Tokenizer family to download, for example sp1024, sp4096, or byte260.",
+        default="sp8192",
+        help="Tokenizer family to download, for example sp8192, sp1024, or byte260.",
     )
     parser.add_argument(
         "--skip-manifest",

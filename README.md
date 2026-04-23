@@ -109,27 +109,31 @@ git clone https://github.com/openai/parameter-golf.git
 cd parameter-golf
 ```
 
-Download our cached version of FineWeb. We'll use the 1024-token vocabulary for now.
+Download the active SP8192 frontier cache.
 
 ```bash
-python3 data/cached_challenge_fineweb.py --variant sp1024
+python3 data/cached_challenge_fineweb.py --variant sp8192
 ```
 
 This defaults to the full validation split plus 80 training shards (8B tokens). If you only want a smaller subset while iterating, pass `--train-shards N`, for example `--train-shards 1`.
 
-Launch your first training run. Note that we're passing `nproc_per_node=1` because we're running on a single H100 GPU in this case.
+Launch the single-H100 proxy for the active root. Note that we're passing `nproc_per_node=1` because we're running on a single H100 GPU in this case.
 
 ```bash
-RUN_ID=baseline_sp1024 \
-DATA_PATH=./data/datasets/fineweb10B_sp1024/ \
-TOKENIZER_PATH=./data/tokenizers/fineweb_1024_bpe.model \
-VOCAB_SIZE=1024 \
+RUN_ID=sp8192_pr1667_proxy \
+DATA_PATH=./data/datasets/fineweb10B_sp8192/ \
+TOKENIZER_PATH=./data/tokenizers/fineweb_8192_bpe.model \
+VOCAB_SIZE=8192 \
+SMEAR_GATE=1 SMEAR_GATE_WIDTH=12 \
+GATE_ATTN_OUT=1 GATE_ATTN_SRC=proj GATE_WIDTH=12 \
+QK_GAIN_INIT=5.25 \
+TTT_ENABLED=1 TTT_LR=0.005 TTT_EPOCHS=2 TTT_CHUNK_TOKENS=16384 \
 torchrun --standalone --nproc_per_node=1 train_gpt.py
 ```
 
 By default, `train_gpt.py` keeps its ~10 minute wallclock cap. If you want a longer run, override it explicitly, for example `MAX_WALLCLOCK_SECONDS=0`.
 
-By default, this command prints `train_loss` step logs during training and prints `val_loss`, `val_bpb`, and compressed model size in the final `final_int8_zlib_roundtrip` lines at the end. If you want periodic validation logs during the run, set `VAL_LOSS_EVERY`, for example `VAL_LOSS_EVERY=200`. For the baseline config, the final `val_bpb` should land around ~1.2 with a compressed model size under 16MB.
+By default, this command prints `train_loss` step logs during training and prints final roundtrip metrics in the `final_int6_*_roundtrip`, `final_sliding_window_exact`, and `quantized_ttt` lines at the end. If you want periodic validation logs during the run, set `VAL_LOSS_EVERY`, for example `VAL_LOSS_EVERY=200`.
 
 For dataset export, tokenizer export, and docs-cache rebuild instructions, see [data/README.md](data/README.md).
 

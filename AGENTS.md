@@ -5,16 +5,15 @@
 - Accepted record source of truth: upstream `README.md` plus accepted `records/`.
 - Current accepted top merged record: `#549` / `2026-03-23_LeakyReLU_LegalTTT_ParallelMuon` at `1.1194`.
 - Latest upstream open leaders checked on April 22, 2026 are `#1767` at `1.07209`, `#1765` at `1.07266`, `#1775` at `1.07285`, `#1776` at `1.08083`, and `#1771` at `1.06513` with legality pending.
-- Upstream SHD-only reference is `#1774` at `1.09813`; that portable delta landed in root, but the current repo remains materially behind the active SP8192 + TTT frontier.
-- Completed local reference baseline: `#589`-style late soft-round QAT at `1.11956668` in `logs/root-pr549-softqat.txt`.
-- Active root path is a clean SP1024 baseline: a `#1060`-derived 11-layer `#549`-family scaffold with coprime multi-shard loading, reserved-time full-Hessian GPTQ6, and SHD-tied Q/K tails with `SHARED_HEAD_DIM=16`.
+- Chosen active root target: `#1667` at `1.07139`, because it is the strongest concrete likely-legal open lane that fits this compact root better than the larger `#1626` family stack.
+- Preserved local reference baseline: `logs/root-pr549-softqat.txt` at `1.11956668`.
+- Active root path is now a compact SP8192 frontier port: 11 layers, 512d, 8H / 4KV, LeakyReLU(0.5)^2, partial RoPE 16, SmearGate, attention-output gate, 3-layer depth recurrence, parallel residuals, int6/int7 export, and legal score-first TTT.
 
 # Hard constraints
 - Never auto-run H100 jobs.
 - Never exceed `16,000,000` artifact bytes on a candidate.
 - Never access network or training data during evaluation.
 - Never brute-force seeds.
-- Never spend H100 compute on already-done donor PR replays once a completed local truth run exists.
 - Keep `train_gpt.py` and `train_gpt_mlx.py` under `1500` lines by `scripts/check_line_budget.py`.
 
 # Workflow
@@ -24,37 +23,36 @@
 - `flash-attn` is optional in code and recommended only in the H100 environment.
 
 # GREEN / YELLOW / RED
-- `GREEN`: none. This repo does not currently carry a frontier-credible global SOTA lane.
-- `YELLOW`: the current SHD/SP1024 root is a clean runnable baseline only; completed `#549` / `#589` truth runs and the preserved April 22 snapshots are reference-only.
-- `RED`: eval caches, two-pass rescoring, tokenizer changes without proof, donor replay runs after a completed local truth run, oversized artifacts, seed brute force, auto-launched H100 jobs, or any calibration that starts after the reserved GPTQ wallclock boundary.
+- `GREEN`: `#1667`-class SP8192 legal-TTT root in `train_gpt.py` with `configs/h100/root_sp8192_pr1667_legal_ttt.json`.
+- `YELLOW`: `configs/h100/root_sp8192_pr1667_legal_ttt_proxy_1xh100.json`, the local SP8192 sanity config, and preserved April 22 snapshots / `#549` truth logs.
+- `RED`: eval caches, two-pass rescoring, tokenizer edits without proof, legality-pending `#1771` as a primary lane, oversized artifacts, seed brute force, or auto-launched H100 jobs.
 
 # Current hypotheses
-- The completed `#549` family is saturated on bytes locally: the completed soft-QAT run used `15,845,667` bytes and did not beat `#549`.
-- The current SHD/SP1024 root is useful as a clean baseline and regression target, not as a plausible global SOTA path.
-- Any real frontier chase now likely requires a separate SP8192 + legal-TTT pivot that is not present in this repo.
-- `#1047`, `#1056`, `#753`, and `#875` are not active targets for this cleaned baseline repo.
-- Reserved-time train-data calibration is acceptable only if it is explicitly logged and the total train-plus-calibration wallclock remains inside `600s`.
-- The active baseline keeps `BigramHash(3072,112)` funded by selective `+/-1` export pruning and adds only SHD-tied Q/K tails with `SHARED_HEAD_DIM=16`; no other eval mechanism is active.
+- The cleaned SHD/SP1024 baseline was useful only as a regression target; the actual frontier chance in this repo is the SP8192 + legal-TTT pivot.
+- `#1667` is the best primary target for this compact root because it keeps the strongest likely-legal score among the open lanes that do not require importing the bulkier `#1626` stack.
+- `#1771` stays out of the active lane until legality is resolved.
+- `#1767`, `#1765`, `#1775`, and `#1776` are reference points, not the active port target.
 
 # Current blockers
-- No H100 truth run has been executed from the cleaned SHD/SP1024 root.
-- The repo currently has no frontier-credible global SOTA lane; a separate pivot would be needed before spending H100 with record intent.
+- The workspace does not currently have the SP8192 dataset/tokenizer cache downloaded locally.
+- No H100 truth run has been executed from the new SP8192 root yet.
 
 # Active candidates
-- `configs/h100/root_pr1060_shd_b3072_prune.json`
-- `configs/h100/root_pr1060_shd_proxy_1xh100.json`
-- `configs/local/root_pr1060_shd_sanity.json`
+- `configs/h100/root_sp8192_pr1667_legal_ttt.json`
+- `configs/h100/root_sp8192_pr1667_legal_ttt_proxy_1xh100.json`
+- `configs/local/root_sp8192_pr1667_legal_ttt_sanity.json`
 
 # Historical references
 - `logs/root-pr549-softqat.txt`
 - `snapshots/train_gpt_2026-04-22_pre_shd_pivot_root.py`
 - `snapshots/train_gpt_2026-04-22_pre_shd_only_prune_root.py`
+- `snapshots/train_gpt_2026-04-22_pre_sp8192_pr1667_pivot_root.py`
 
 # Run ladder
-- Run 1: clean SHD/SP1024 baseline characterization on H100 via `configs/h100/root_pr1060_shd_b3072_prune.json`
-- Optional directional proxy only: `configs/h100/root_pr1060_shd_proxy_1xh100.json`
-- Do not interpret a successful run as a global SOTA claim; use it only to measure the current root against the preserved local reference baseline.
-- Before any H100 run, verify the pod has the new root: `train_gpt.py` should contain `SHARED_HEAD_DIM`, `GPTQ_RESERVE_MS`, and `gptq:start reserved_train_data`, and should not contain any removed fallback knobs.
+- Run 1: `configs/h100/root_sp8192_pr1667_legal_ttt.json`
+- Optional proxy only: `configs/h100/root_sp8192_pr1667_legal_ttt_proxy_1xh100.json`
+- Before any H100 run, verify the pod has the SP8192 frontier root: `train_gpt.py` should contain `VOCAB_SIZE`, `TTT_ENABLED`, `SMEAR_GATE`, `GATE_ATTN_OUT`, `QK_GAIN_INIT`, `NUM_LOOPS`, and `PARALLEL_START_LAYER`.
+- Download the dataset first: `python data/cached_challenge_fineweb.py --variant sp8192`
 
 # Rules for code changes
 - Keep record-critical logic in root `train_gpt.py`.
@@ -65,10 +63,9 @@
 # Rules for eval and export
 - Preserve challenge semantics.
 - Log exact roundtrip metrics, sliding metrics, artifact bytes, and eval time.
-- Do not keep eval-cache or n-gram scoring in the active record path until OpenAI publishes a clarified rule path.
-- Do not access `fineweb_train_*` after the `600s` global budget; reserved-time calibration over train shards is allowed only if it starts before the logged reserve boundary and finishes inside the same total budget.
+- Keep the active TTT path score-first and single-pass.
 - Keep byte accounting tied to exact tokenizer LUTs, not fixed divisors.
-- Keep packed GPTQ calibration explicit, reserved-time, and full-Hessian; do not fall back to the retired in-training collector path.
+- Keep the active export path at int6 matrices + int7 embeddings.
 
 # Dependencies
 - No new mandatory runtime dependencies.
