@@ -6,6 +6,10 @@ import re
 import sys
 from pathlib import Path
 
+DEFAULT_PUBLIC_REPO_ID = "willdepueoai/parameter-golf"
+DEFAULT_REMOTE_ROOT_PREFIX = "datasets"
+CUSTOM_REPO_EXAMPLE = "kevclark/parameter-golf"
+
 
 def infer_vocab_family(path_str: str) -> int | None:
     normalized = path_str.replace("\\", "/")
@@ -35,6 +39,8 @@ def main() -> None:
     data_path = resolve_path(root, env["DATA_PATH"])
     tokenizer_path = resolve_path(root, env["TOKENIZER_PATH"])
     vocab_size = int(env["VOCAB_SIZE"])
+    repo_id = env.get("MATCHED_FINEWEB_REPO_ID", DEFAULT_PUBLIC_REPO_ID)
+    remote_root_prefix = env.get("MATCHED_FINEWEB_REMOTE_ROOT_PREFIX", DEFAULT_REMOTE_ROOT_PREFIX)
 
     data_vocab = infer_vocab_family(str(data_path))
     tokenizer_vocab = infer_vocab_family(str(tokenizer_path))
@@ -55,11 +61,22 @@ def main() -> None:
         failures.append(f"No training shards under {data_path}")
     if not val_files:
         failures.append(f"No validation shards under {data_path}")
+    if vocab_size >= 8192:
+        if repo_id == DEFAULT_PUBLIC_REPO_ID:
+            failures.append(
+                "SP8192 configs require a custom dataset export. "
+                f"Set MATCHED_FINEWEB_REPO_ID={CUSTOM_REPO_EXAMPLE} (or an equivalent compatible repo) "
+                "instead of the public HF dataset repo."
+            )
+        if not remote_root_prefix:
+            failures.append("MATCHED_FINEWEB_REMOTE_ROOT_PREFIX must not be empty for the SP8192 frontier lane")
 
     print(f"config: {config_path}")
     print(f"data_path: {data_path}")
     print(f"tokenizer_path: {tokenizer_path}")
     print(f"vocab_size: {vocab_size}")
+    print(f"matched_fineweb_repo_id: {repo_id}")
+    print(f"matched_fineweb_remote_root_prefix: {remote_root_prefix}")
     print(f"train_shards_found: {len(train_files)}")
     print(f"val_shards_found: {len(val_files)}")
 
@@ -67,6 +84,12 @@ def main() -> None:
         print("status: FAIL")
         for failure in failures:
             print(f"- {failure}")
+        if vocab_size >= 8192:
+            print(
+                "hint: bootstrap the frontier cache with "
+                f"`MATCHED_FINEWEB_REPO_ID={repo_id} MATCHED_FINEWEB_REMOTE_ROOT_PREFIX={remote_root_prefix} "
+                "python data/cached_challenge_fineweb.py --variant sp8192`"
+            )
         raise SystemExit(1)
 
     print("status: PASS")

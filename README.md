@@ -101,7 +101,7 @@ You can rent GPUs from anywhere, but OpenAI is partnering with Runpod to make se
 
 3. Let's start with a 1xH100 pod. Deploy using the official Parameter Golf template: [Launch Template](https://console.runpod.io/deploy?template=y5cejece4j&ref=nl2r56th). Enable SSH terminal access, leaving the other settings at their defaults. Deploy your pod and SSH into it once it's up. You should land in `/workspace/`.
 
-On your remote machine, clone the repo onto local disk. All Python dependencies are already pre-installed in the image.
+On your remote machine, clone the repo onto local disk. The base CUDA image is enough to get started, but the active FLA lane still needs the pinned runtime from `requirements-h100-fla.txt`.
 
 ```bash
 cd /workspace
@@ -109,41 +109,43 @@ git clone https://github.com/openai/parameter-golf.git
 cd parameter-golf
 ```
 
-Download the active SP8192 frontier cache.
+Install the pinned runtime for the active FLA lane:
 
 ```bash
+pip install -r requirements-h100-fla.txt
+```
+
+Download the active SP8192 cache from the custom matched export:
+
+```bash
+MATCHED_FINEWEB_REPO_ID=kevclark/parameter-golf \
+MATCHED_FINEWEB_REMOTE_ROOT_PREFIX=datasets \
 python3 data/cached_challenge_fineweb.py --variant sp8192
 ```
 
 This defaults to the full validation split plus 80 training shards (8B tokens). If you only want a smaller subset while iterating, pass `--train-shards N`, for example `--train-shards 1`.
 
-Before launching a run, verify that the dataset path, tokenizer path, and vocab family all match the config:
+Before launching a run, verify that the dataset path, tokenizer path, vocab family, and custom repo all match the config:
 
 ```bash
-python3 scripts/check_run_ready.py configs/h100/root_sp8192_pr1667_legal_ttt_proxy_1xh100.json
+python3 scripts/check_run_ready.py configs/h100/root_sp8192_pr1791_fla_proxy_1xh100.json
 ```
 
-Launch the single-H100 proxy for the active root. Note that we're passing `nproc_per_node=1` because we're running on a single H100 GPU in this case.
+Generate the single-H100 proxy command for the active root:
 
 ```bash
-RUN_ID=sp8192_pr1667_proxy \
-DATA_PATH=./data/datasets/fineweb10B_sp8192/ \
-TOKENIZER_PATH=./data/tokenizers/fineweb_8192_bpe.model \
-VOCAB_SIZE=8192 \
-SMEAR_GATE=1 SMEAR_GATE_WIDTH=12 \
-GATE_ATTN_OUT=1 GATE_ATTN_SRC=proj GATE_WIDTH=12 \
-QK_GAIN_INIT=5.25 \
-TTT_ENABLED=1 TTT_LR=0.005 TTT_EPOCHS=2 TTT_CHUNK_TOKENS=16384 \
-torchrun --standalone --nproc_per_node=1 train_gpt.py
+python3 scripts/prepare_h100_run.py configs/h100/root_sp8192_pr1791_fla_proxy_1xh100.json
 ```
+
+Run the emitted command exactly as printed. It already includes the correct `MATCHED_FINEWEB_REPO_ID`, `MATCHED_FINEWEB_REMOTE_ROOT_PREFIX`, `ARCH_MODE=K`, SP8192 paths, and `nproc_per_node=1` setting for the proxy lane.
 
 By default, `train_gpt.py` keeps its ~10 minute wallclock cap. If you want a longer run, override it explicitly, for example `MAX_WALLCLOCK_SECONDS=0`.
 
-By default, this command prints `train_loss` step logs during training and prints final roundtrip metrics in the `final_int6_*_roundtrip`, `final_sliding_window_exact`, and `quantized_ttt` lines at the end. If you want periodic validation logs during the run, set `VAL_LOSS_EVERY`, for example `VAL_LOSS_EVERY=200`.
+The active frontier runner is the `#1791`-class K_KVShare_Wider GatedDeltaNet / FLA lane. It is not compatible with the public `willdepueoai/parameter-golf` SP1024-only export. The local `train_gpt_mlx.py` helper remains an SP1024 baseline path for Apple Silicon only.
 
 For dataset export, tokenizer export, and docs-cache rebuild instructions, see [data/README.md](data/README.md).
 
-Evaluation will be in the RunPod environment with all packages installed. `requirements.txt` is provided as a reference if you want to self-setup.
+Evaluation will be in the RunPod environment after you install `requirements-h100-fla.txt`. No network access or dataset reads are allowed during eval.
 
 ## FAQ
 

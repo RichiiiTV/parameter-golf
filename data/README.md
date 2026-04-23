@@ -1,47 +1,54 @@
 # Data Workflows
 
-This repo is now targeted at the SP8192 frontier lane.
+The active frontier lane in this repo is SP8192 and expects a custom matched FineWeb export.
 
 Canonical active layout:
 - `data/datasets/fineweb10B_sp8192/`
 - `data/tokenizers/fineweb_8192_bpe.model`
+- `data/tokenizers/fineweb_8192_bpe.vocab`
 - `data/manifest.json`
 
-Historical SP1024 assets can still exist locally for snapshots and old logs, but the active root/config surface expects SP8192.
+Default custom export route used by the active configs:
+- `MATCHED_FINEWEB_REPO_ID=kevclark/parameter-golf`
+- `MATCHED_FINEWEB_REMOTE_ROOT_PREFIX=datasets`
 
-## Downloading Published Data
+The public Hugging Face dataset repo still only publishes SP1024. Use that only for the non-frontier MLX helper or historical debugging.
+
+## Downloading The Active Frontier Cache
 
 Download the active SP8192 cache with:
 
 ```bash
+MATCHED_FINEWEB_REPO_ID=kevclark/parameter-golf \
+MATCHED_FINEWEB_REMOTE_ROOT_PREFIX=datasets \
 python3 data/cached_challenge_fineweb.py --variant sp8192
 ```
 
 This populates `./data/datasets/fineweb10B_sp8192/` and `./data/tokenizers/`.
 By default it downloads the full validation split and 8B training tokens (80 train shards).
 
-Before launching `torchrun`, verify that the active config points at the downloaded tokenizer family:
+Before launching `torchrun`, verify that the active config points at the downloaded tokenizer family and custom repo:
 
 ```bash
-python3 scripts/check_run_ready.py configs/h100/root_sp8192_pr1667_legal_ttt_proxy_1xh100.json
+python3 scripts/check_run_ready.py configs/h100/root_sp8192_pr1791_fla_proxy_1xh100.json
 ```
 
-For a smaller local smoke subset:
+For a smaller bootstrap subset while iterating:
 
 ```bash
+MATCHED_FINEWEB_REPO_ID=kevclark/parameter-golf \
+MATCHED_FINEWEB_REMOTE_ROOT_PREFIX=datasets \
 python3 data/cached_challenge_fineweb.py --variant sp8192 --train-shards 1
 ```
 
-The downloader is manifest-driven. It can still fetch older variants such as `sp1024`, but those are not the active record-intent path anymore.
+Validation is always downloaded in full from the fixed `fineweb_val_*` split. Training on the first `N` train shards keeps the same frozen shuffled prefix for that tokenizer family.
 
-## Alternate Published Roots
+## Public SP1024 Fallback
 
-If you have your own published export root:
+If you explicitly want the archived public cache for `train_gpt_mlx.py` or historical comparison:
 
 ```bash
-MATCHED_FINEWEB_REPO_ID=your-hf-username/your-dataset-repo \
-MATCHED_FINEWEB_REMOTE_ROOT_PREFIX=your_export_root \
-python3 data/cached_challenge_fineweb.py --variant sp8192 --train-shards 100
+python3 data/cached_challenge_fineweb.py --variant sp1024
 ```
 
-Validation is always downloaded in full from the fixed `fineweb_val_*` split. Training on the first `N` train shards keeps the same frozen shuffled prefix for that tokenizer family.
+That uses the public default repo `willdepueoai/parameter-golf`. Do not treat it as the active frontier surface for `train_gpt.py`.

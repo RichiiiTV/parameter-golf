@@ -2,21 +2,20 @@
 
 ## Active Frontier Lane
 - Active root runner: `train_gpt.py`
-- Runnable H100 target: `configs/h100/root_sp8192_pr1667_legal_ttt.json`
-- Directional proxy: `configs/h100/root_sp8192_pr1667_legal_ttt_proxy_1xh100.json`
-- Local sanity: `configs/local/root_sp8192_pr1667_legal_ttt_sanity.json`
-- Required dataset/tokenizer surface: `sp8192`
+- Active frontier package: `frontier_gdn/`
+- Runnable H100 target: `configs/h100/root_sp8192_pr1791_fla_8xh100.json`
+- Directional proxy: `configs/h100/root_sp8192_pr1791_fla_proxy_1xh100.json`
+- Local sanity: `configs/local/root_sp8192_pr1791_fla_sanity.json`
+- Required dataset/tokenizer surface: custom SP8192 export via `MATCHED_FINEWEB_REPO_ID=kevclark/parameter-golf`
 - Preserved local reference baseline: `logs/root-pr549-softqat.txt` at `1.11956668`
-- Preserved April 22 snapshots: `snapshots/train_gpt_2026-04-22_pre_shd_pivot_root.py`, `snapshots/train_gpt_2026-04-22_pre_shd_only_prune_root.py`, and `snapshots/train_gpt_2026-04-22_pre_sp8192_pr1667_pivot_root.py`
+- Preserved historical snapshots: `snapshots/train_gpt_2026-04-22_pre_shd_pivot_root.py`, `snapshots/train_gpt_2026-04-22_pre_shd_only_prune_root.py`, `snapshots/train_gpt_2026-04-22_pre_sp8192_pr1667_pivot_root.py`, `snapshots/train_gpt_2026-04-23_pre_public_sp1024_reset_root.py`, and `snapshots/train_gpt_2026-04-23_pre_pr1791_fla_pivot_root.py`
 
-## April 22 Frontier Choice
-- Latest open upstream leaders checked on April 22, 2026: `#1767` at `1.07209`, `#1765` at `1.07266`, `#1775` at `1.07285`, `#1776` at `1.08083`, and `#1771` at `1.06513` with legality pending.
-- Chosen root target: `#1667` at `1.07139`.
-- Rejected `#1771` as the primary target because legality is still pending.
-- Rejected `#1767` and `#1765` because they depend on the larger `#1626` varlen / phased-TTT stack and fit this compact root poorly.
-- Rejected `#1775` and `#1776` because both are lower-upside bridges than the direct `#1667` lane.
+## Upstream Check
+- Checked on April 23, 2026: `#1791` leads the open SP8192 pack at `1.0339`.
+- Relevant alternatives: `#1787` at `1.06378`, `#1790` at `1.06991`, `#1771` at `1.06513` with legality pending, and `#1767` at `1.07209`.
+- Decision: target `#1791` first because it is the strongest visible open lane and avoids the active TTT / CaseOps legality path.
 
 ## Current Use
-- Treat this repo as a compact `#1667`-class SP8192 frontier attempt.
-- Use the H100 main config for any record-intent manual run.
-- Use the 1xH100 proxy only for cheap directional reads.
+- Use the proxy first to validate the FLA runtime, SP8192 cache, artifact size, and roundtrip stability.
+- Promote the 8xH100 lane only after the proxy is stable.
+- If the FLA proxy cannot be made evaluation-stable on the pinned runtime, re-plan around `#1787`; do not half-port `#1791`.
