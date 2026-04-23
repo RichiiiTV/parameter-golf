@@ -6,6 +6,7 @@ import lzma
 import math
 import os
 import random
+import re
 import subprocess, sys
 import time
 import uuid
@@ -204,6 +205,48 @@ def load_validation_tokens(pattern: str, seq_len: int) -> Tensor:
     if usable <= 0:
         raise ValueError(f"Validation split is too short for TRAIN_SEQ_LEN={seq_len}")
     return tokens[: usable + 1]
+def infer_vocab_family_from_path(path_str: str) -> int | None:
+    path = path_str.replace("\\", "/")
+    patterns = (r"sp(\d+)", r"fineweb_(\d+)_bpe\.model", r"fineweb_(\d+)_bpe\.vocab")
+    for pattern in patterns:
+        match = re.search(pattern, path)
+        if match:
+            return int(match.group(1))
+    return None
+def ensure_local_runtime_inputs(args: Hyperparameters) -> None:
+    data_vocab = infer_vocab_family_from_path(args.data_path)
+    tokenizer_vocab = infer_vocab_family_from_path(args.tokenizer_path)
+    mismatch_reasons = []
+    if data_vocab is not None and data_vocab != args.vocab_size:
+        mismatch_reasons.append(f"DATA_PATH implies sp{data_vocab} but VOCAB_SIZE={args.vocab_size}")
+    if tokenizer_vocab is not None and tokenizer_vocab != args.vocab_size:
+        mismatch_reasons.append(f"TOKENIZER_PATH implies sp{tokenizer_vocab} but VOCAB_SIZE={args.vocab_size}")
+    if data_vocab is not None and tokenizer_vocab is not None and data_vocab != tokenizer_vocab:
+        mismatch_reasons.append(f"DATA_PATH implies sp{data_vocab} but TOKENIZER_PATH implies sp{tokenizer_vocab}")
+    if mismatch_reasons:
+        raise ValueError(
+            "Inconsistent tokenizer family configuration: "
+            + "; ".join(mismatch_reasons)
+            + ". Use matching DATA_PATH, TOKENIZER_PATH, and VOCAB_SIZE values."
+        )
+    tokenizer_path = Path(args.tokenizer_path)
+    if not tokenizer_path.is_file():
+        raise FileNotFoundError(
+            f"Missing tokenizer model: {args.tokenizer_path}. "
+            "Download the active cache with `python data/cached_challenge_fineweb.py --variant sp8192` "
+            "or point TOKENIZER_PATH at an existing SentencePiece model. "
+            "DATA_PATH, TOKENIZER_PATH, and VOCAB_SIZE must all refer to the same tokenizer family."
+        )
+    if not glob.glob(args.train_files):
+        raise FileNotFoundError(
+            f"No training shards found for pattern: {args.train_files}. "
+            "Download the matching dataset cache first or point DATA_PATH at the correct dataset root."
+        )
+    if not glob.glob(args.val_files):
+        raise FileNotFoundError(
+            f"No validation shards found for pattern: {args.val_files}. "
+            "Download the matching dataset cache first or point DATA_PATH at the correct dataset root."
+        )
 def eval_val(
     args: Hyperparameters,
     model: nn.Module,
@@ -1057,6 +1100,7 @@ def main() -> None:
     global zeropower_via_newtonschulz5
     code = Path(__file__).read_text(encoding="utf-8")
     args = Hyperparameters()
+    ensure_local_runtime_inputs(args)
     zeropower_via_newtonschulz5 = torch.compile(zeropower_via_newtonschulz5)
     distributed = "RANK" in os.environ and "WORLD_SIZE" in os.environ
     rank = int(os.environ.get("RANK", "0"))
@@ -1437,7 +1481,9 @@ def main() -> None:
             f"quantized_ttt val_loss:{ttt_val_loss:.8f} val_bpb:{ttt_val_bpb:.8f} "
             f"eval_time:{1000.0 * (time.perf_counter() - t_ttt):.0f}ms"
         )
-    if distributed:
-        dist.destroy_process_group()
 if __name__ == "__main__":
-    main()
+    try:
+        main()
+    finally:
+        if dist.is_available() and dist.is_initialized():
+            dist.destroy_process_group()

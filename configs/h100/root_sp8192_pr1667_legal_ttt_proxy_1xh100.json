@@ -67,7 +67,7 @@
   "profile": "h100-root-sp8192-pr1667-legal-ttt-proxy-1xh100",
   "promote": false,
   "purpose": "Run a cheap proxy for the SP8192 frontier lane without claiming final 8xH100 timing or leaderboard validity.",
-  "prerequisite": "Download the SP8192 cache first with `python data/cached_challenge_fineweb.py --variant sp8192` before using this config.",
+  "prerequisite": "Download the SP8192 cache with `python data/cached_challenge_fineweb.py --variant sp8192`, then verify inputs with `python scripts/check_run_ready.py configs/h100/root_sp8192_pr1667_legal_ttt_proxy_1xh100.json` before using this config.",
   "runtime_budget_minutes": 10,
   "sanity_check_command": "rg -n \"VOCAB_SIZE|TTT_ENABLED|SMEAR_GATE|GATE_ATTN_OUT|QK_GAIN_INIT|NUM_LOOPS|PARALLEL_START_LAYER\" train_gpt.py",
   "success_criteria": "Directional only: finish end-to-end, exercise the score-first TTT path, and produce a byte-safe `quantized_ttt` read without crashes."

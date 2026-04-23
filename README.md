@@ -117,6 +117,12 @@ python3 data/cached_challenge_fineweb.py --variant sp8192
 
 This defaults to the full validation split plus 80 training shards (8B tokens). If you only want a smaller subset while iterating, pass `--train-shards N`, for example `--train-shards 1`.
 
+Before launching a run, verify that the dataset path, tokenizer path, and vocab family all match the config:
+
+```bash
+python3 scripts/check_run_ready.py configs/h100/root_sp8192_pr1667_legal_ttt_proxy_1xh100.json
+```
+
 Launch the single-H100 proxy for the active root. Note that we're passing `nproc_per_node=1` because we're running on a single H100 GPU in this case.
 
 ```bash

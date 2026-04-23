@@ -20,6 +20,12 @@ python3 data/cached_challenge_fineweb.py --variant sp8192
 This populates `./data/datasets/fineweb10B_sp8192/` and `./data/tokenizers/`.
 By default it downloads the full validation split and 8B training tokens (80 train shards).
 
+Before launching `torchrun`, verify that the active config points at the downloaded tokenizer family:
+
+```bash
+python3 scripts/check_run_ready.py configs/h100/root_sp8192_pr1667_legal_ttt_proxy_1xh100.json
+```
+
 For a smaller local smoke subset:
 
 ```bash

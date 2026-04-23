@@ -11,6 +11,52 @@ REMOTE_ROOT_PREFIX = os.environ.get("MATCHED_FINEWEB_REMOTE_ROOT_PREFIX", "datas
 ROOT = Path(__file__).resolve().parent
 DATASETS_DIR = ROOT / "datasets"
 TOKENIZERS_DIR = ROOT / "tokenizers"
+BUILTIN_TOKENIZERS = {
+    "sp_bpe_1024": {
+        "name": "sp_bpe_1024",
+        "kind": "sentencepiece_bpe",
+        "vocab_size": 1024,
+        "bos_id": 1,
+        "eos_id": 2,
+        "model_path": "tokenizers/fineweb_1024_bpe.model",
+        "vocab_path": "tokenizers/fineweb_1024_bpe.vocab",
+    },
+    "sp_bpe_8192": {
+        "name": "sp_bpe_8192",
+        "kind": "sentencepiece_bpe",
+        "vocab_size": 8192,
+        "bos_id": 1,
+        "eos_id": 2,
+        "model_path": "tokenizers/fineweb_8192_bpe.model",
+        "vocab_path": "tokenizers/fineweb_8192_bpe.vocab",
+    },
+}
+BUILTIN_DATASETS = {
+    "fineweb10B_sp1024": {
+        "name": "fineweb10B_sp1024",
+        "tokenizer_name": "sp_bpe_1024",
+        "tokenizer_kind": "sentencepiece_bpe",
+        "path": "datasets/fineweb10B_sp1024",
+        "train_glob": "datasets/fineweb10B_sp1024/fineweb_train_*.bin",
+        "val_glob": "datasets/fineweb10B_sp1024/fineweb_val_*.bin",
+        "vocab_size": 1024,
+        "bos_id": 1,
+        "eos_id": 2,
+        "stats": {"files_train": 195, "files_val": 1},
+    },
+    "fineweb10B_sp8192": {
+        "name": "fineweb10B_sp8192",
+        "tokenizer_name": "sp_bpe_8192",
+        "tokenizer_kind": "sentencepiece_bpe",
+        "path": "datasets/fineweb10B_sp8192",
+        "train_glob": "datasets/fineweb10B_sp8192/fineweb_train_*.bin",
+        "val_glob": "datasets/fineweb10B_sp8192/fineweb_val_*.bin",
+        "vocab_size": 8192,
+        "bos_id": 1,
+        "eos_id": 2,
+        "stats": {"files_train": 195, "files_val": 1},
+    },
+}
 
 def dataset_dir_for_variant(name: str) -> str:
     if name == "byte260":
@@ -72,11 +118,19 @@ def load_manifest(*, skip_manifest_download: bool) -> dict:
     path = manifest_path()
     if not path.is_file():
         if skip_manifest_download:
-            raise FileNotFoundError(
-                f"manifest.json is required for manifest-driven shard counts but is not present locally at {path}"
-            )
+            return {}
         get(f"{REMOTE_ROOT_PREFIX}/manifest.json")
     return json.loads(path.read_text(encoding="utf-8"))
+def resolve_dataset_entry(manifest: dict, dataset_name: str) -> dict | None:
+    entry = next((x for x in manifest.get("datasets", []) if x.get("name") == dataset_name), None)
+    if entry is not None:
+        return entry
+    return dict(BUILTIN_DATASETS.get(dataset_name, {})) or None
+def resolve_tokenizer_entry(manifest: dict, tokenizer_name: str) -> dict | None:
+    entry = next((x for x in manifest.get("tokenizers", []) if x.get("name") == tokenizer_name), None)
+    if entry is not None:
+        return entry
+    return dict(BUILTIN_TOKENIZERS.get(tokenizer_name, {})) or None
 
 
 def artifact_paths_for_tokenizer(tokenizer_entry: dict) -> list[str]:
@@ -131,19 +185,25 @@ def main() -> None:
         raise ValueError("train_shards must be non-negative")
 
     manifest = load_manifest(skip_manifest_download=args.skip_manifest)
-    dataset_entry = next((x for x in manifest.get("datasets", []) if x.get("name") == dataset_dir), None)
+    dataset_entry = resolve_dataset_entry(manifest, dataset_dir)
     if dataset_entry is None:
-        raise ValueError(f"dataset {dataset_dir} not found in {REMOTE_ROOT_PREFIX}/manifest.json")
-    max_train_shards = int((dataset_entry.get("stats") or {}).get("files_train"))
-    val_shards = int((dataset_entry.get("stats") or {}).get("files_val"))
+        raise ValueError(
+            f"dataset {dataset_dir} not found in {REMOTE_ROOT_PREFIX}/manifest.json or built-in fallback metadata"
+        )
+    max_train_shards = int((dataset_entry.get("stats") or {}).get("files_train", 0))
+    val_shards = int((dataset_entry.get("stats") or {}).get("files_val", 0))
+    if max_train_shards <= 0 or val_shards <= 0:
+        raise ValueError(f"dataset metadata for {dataset_dir} is missing shard counts: {dataset_entry}")
     if train_shards > max_train_shards:
         raise ValueError(
             f"{args.variant} only has {max_train_shards} training shards on {REPO_ID}, requested {train_shards}"
         )
     tokenizer_name = dataset_entry.get("tokenizer_name")
-    tokenizer_entry = next((x for x in manifest.get("tokenizers", []) if x.get("name") == tokenizer_name), None)
+    tokenizer_entry = resolve_tokenizer_entry(manifest, tokenizer_name)
     if tokenizer_entry is None:
-        raise ValueError(f"tokenizer {tokenizer_name} not found in {REMOTE_ROOT_PREFIX}/manifest.json")
+        raise ValueError(
+            f"tokenizer {tokenizer_name} not found in {REMOTE_ROOT_PREFIX}/manifest.json or built-in fallback metadata"
+        )
 
     if args.with_docs:
         get(f"{REMOTE_ROOT_PREFIX}/docs_selected.jsonl")
