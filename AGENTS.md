@@ -56,8 +56,8 @@
 # Run ladder
 - Run 1: `configs/h100/root_sp8192_pr1493_accepted_8xh100.json`
 - Before any H100 run, install the accepted baseline runtime: `pip install brotli sentencepiece` and `pip install flash_attn_3 --no-deps --find-links https://windreamer.github.io/flash-attention3-wheels/cu128_torch291/`.
-- Before any H100 run, verify readiness with `python scripts/check_run_ready.py configs/h100/root_sp8192_pr1493_accepted_8xh100.json`.
-- Pod sanity check: `rg -n "QK_GAIN_INIT|TTT_ENABLED|TTT_LR|TTT_EPOCHS|VOCAB_SIZE|MATCHED_FINEWEB" train_gpt.py records/track_10min_16mb/2026-04-09_SP8192_3LayerRecur_ParResid_QK525_LegalTTT/README.md records/track_10min_16mb/2026-04-09_SP8192_3LayerRecur_ParResid_QK525_LegalTTT/submission.json`
+- Before any H100 run, verify payload/import and data readiness with `python scripts/check_active_train_payload.py --require-imports configs/h100/root_sp8192_pr1493_accepted_8xh100.json` and `python scripts/check_run_ready.py configs/h100/root_sp8192_pr1493_accepted_8xh100.json`.
+- Pod sanity check: `python scripts/check_active_train_payload.py --require-imports configs/h100/root_sp8192_pr1493_accepted_8xh100.json`
 - Download the dataset first: `MATCHED_FINEWEB_REPO_ID=kevclark/parameter-golf MATCHED_FINEWEB_REMOTE_ROOT_PREFIX=datasets python data/cached_challenge_fineweb.py --variant sp8192`
 
 # Rules for code changes

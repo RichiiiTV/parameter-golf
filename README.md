@@ -129,6 +129,7 @@ This defaults to the full validation split plus 80 training shards (8B tokens). 
 Before launching a run, verify that the dataset path, tokenizer path, vocab family, and custom repo all match the config:
 
 ```bash
+python3 scripts/check_active_train_payload.py --require-imports configs/h100/root_sp8192_pr1493_accepted_8xh100.json
 python3 scripts/check_run_ready.py configs/h100/root_sp8192_pr1493_accepted_8xh100.json
 ```
 

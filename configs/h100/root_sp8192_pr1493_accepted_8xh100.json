@@ -1,6 +1,7 @@
 {
   "classification": "GREEN",
   "env": {
+    "DATA_DIR": "./data",
     "DATA_PATH": "./data/datasets/fineweb10B_sp8192",
     "MATCHED_FINEWEB_REMOTE_ROOT_PREFIX": "datasets",
     "MATCHED_FINEWEB_REPO_ID": "kevclark/parameter-golf",
@@ -20,9 +21,9 @@
   "profile": "h100-root-sp8192-pr1493-accepted-8xh100",
   "promote": true,
   "purpose": "Run the accepted #1493 SP8192 legal SOTA baseline from root train_gpt.py without relying on the demoted #1791 GDN/FLA lane.",
-  "prerequisite": "Download the SP8192 custom cache with `MATCHED_FINEWEB_REPO_ID=kevclark/parameter-golf MATCHED_FINEWEB_REMOTE_ROOT_PREFIX=datasets python data/cached_challenge_fineweb.py --variant sp8192`, then verify readiness with `python scripts/check_run_ready.py configs/h100/root_sp8192_pr1493_accepted_8xh100.json`.",
+  "prerequisite": "Download the SP8192 custom cache with `MATCHED_FINEWEB_REPO_ID=kevclark/parameter-golf MATCHED_FINEWEB_REMOTE_ROOT_PREFIX=datasets python data/cached_challenge_fineweb.py --variant sp8192`, then verify readiness with `python scripts/check_active_train_payload.py --require-imports configs/h100/root_sp8192_pr1493_accepted_8xh100.json` and `python scripts/check_run_ready.py configs/h100/root_sp8192_pr1493_accepted_8xh100.json` after installing the H100 runtime.",
   "runtime_budget_minutes": 10,
-  "sanity_check_command": "rg -n \"QK_GAIN_INIT|TTT_ENABLED|TTT_LR|TTT_EPOCHS|VOCAB_SIZE|MATCHED_FINEWEB\" train_gpt.py records/track_10min_16mb/2026-04-09_SP8192_3LayerRecur_ParResid_QK525_LegalTTT/README.md records/track_10min_16mb/2026-04-09_SP8192_3LayerRecur_ParResid_QK525_LegalTTT/submission.json",
+  "sanity_check_command": "python scripts/check_active_train_payload.py --require-imports configs/h100/root_sp8192_pr1493_accepted_8xh100.json",
   "slurm": {
     "run_id": "root-sp8192-pr1493-accepted-8xh100",
     "script": "train_gpt.py",

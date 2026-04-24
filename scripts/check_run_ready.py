@@ -39,6 +39,7 @@ def main() -> None:
     data_path = resolve_path(root, env["DATA_PATH"])
     tokenizer_path = resolve_path(root, env["TOKENIZER_PATH"])
     vocab_size = int(env["VOCAB_SIZE"])
+    data_dir = env.get("DATA_DIR")
     repo_id = env.get("MATCHED_FINEWEB_REPO_ID", DEFAULT_PUBLIC_REPO_ID)
     remote_root_prefix = env.get("MATCHED_FINEWEB_REMOTE_ROOT_PREFIX", DEFAULT_REMOTE_ROOT_PREFIX)
 
@@ -52,6 +53,13 @@ def main() -> None:
         failures.append(f"TOKENIZER_PATH implies sp{tokenizer_vocab} but VOCAB_SIZE={vocab_size}")
     if data_vocab is not None and tokenizer_vocab is not None and data_vocab != tokenizer_vocab:
         failures.append(f"DATA_PATH implies sp{data_vocab} but TOKENIZER_PATH implies sp{tokenizer_vocab}")
+    if data_dir:
+        derived_data_path = resolve_path(root, str(Path(data_dir) / "datasets" / f"fineweb10B_sp{vocab_size}"))
+        derived_tokenizer_path = resolve_path(root, str(Path(data_dir) / "tokenizers" / f"fineweb_{vocab_size}_bpe.model"))
+        if derived_data_path != data_path:
+            failures.append(f"DATA_DIR derives {derived_data_path} but DATA_PATH is {data_path}")
+        if derived_tokenizer_path != tokenizer_path:
+            failures.append(f"DATA_DIR derives {derived_tokenizer_path} but TOKENIZER_PATH is {tokenizer_path}")
     if not tokenizer_path.is_file():
         failures.append(f"Missing tokenizer: {tokenizer_path}")
 
@@ -73,6 +81,8 @@ def main() -> None:
 
     print(f"config: {config_path}")
     print(f"data_path: {data_path}")
+    if data_dir:
+        print(f"data_dir: {resolve_path(root, data_dir)}")
     print(f"tokenizer_path: {tokenizer_path}")
     print(f"vocab_size: {vocab_size}")
     print(f"matched_fineweb_repo_id: {repo_id}")

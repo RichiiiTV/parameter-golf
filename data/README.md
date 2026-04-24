@@ -30,6 +30,7 @@ By default it downloads the full validation split and 8B training tokens (80 tra
 Before launching `torchrun`, verify that the active config points at the downloaded tokenizer family and custom repo:
 
 ```bash
+python3 scripts/check_active_train_payload.py --require-imports configs/h100/root_sp8192_pr1493_accepted_8xh100.json
 python3 scripts/check_run_ready.py configs/h100/root_sp8192_pr1493_accepted_8xh100.json
 ```
 
