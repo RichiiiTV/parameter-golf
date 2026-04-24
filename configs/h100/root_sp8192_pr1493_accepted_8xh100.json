@@ -1,0 +1,33 @@
+{
+  "classification": "GREEN",
+  "env": {
+    "DATA_PATH": "./data/datasets/fineweb10B_sp8192",
+    "MATCHED_FINEWEB_REMOTE_ROOT_PREFIX": "datasets",
+    "MATCHED_FINEWEB_REPO_ID": "kevclark/parameter-golf",
+    "MAX_WALLCLOCK_SECONDS": "600",
+    "QK_GAIN_INIT": "5.25",
+    "SEED": "42",
+    "TOKENIZER_PATH": "./data/tokenizers/fineweb_8192_bpe.model",
+    "TTT_ENABLED": "1",
+    "TTT_EPOCHS": "3",
+    "TTT_LR": "0.005",
+    "VOCAB_SIZE": "8192"
+  },
+  "h100_only": true,
+  "hardware": "8xH100-SXM",
+  "lane": "h100_root_sp8192_pr1493_accepted",
+  "notes": "Accepted upstream #1493 baseline with local syntax and decimal artifact-cap enforcement repairs: SP8192 + 3-layer recurrence + parallel residuals + QK-Gain 5.25 + legal score-first TTT. Use as the active legal SOTA reference until a stronger canonical run is proven.",
+  "profile": "h100-root-sp8192-pr1493-accepted-8xh100",
+  "promote": true,
+  "purpose": "Run the accepted #1493 SP8192 legal SOTA baseline from root train_gpt.py without relying on the demoted #1791 GDN/FLA lane.",
+  "prerequisite": "Download the SP8192 custom cache with `MATCHED_FINEWEB_REPO_ID=kevclark/parameter-golf MATCHED_FINEWEB_REMOTE_ROOT_PREFIX=datasets python data/cached_challenge_fineweb.py --variant sp8192`, then verify readiness with `python scripts/check_run_ready.py configs/h100/root_sp8192_pr1493_accepted_8xh100.json`.",
+  "runtime_budget_minutes": 10,
+  "sanity_check_command": "rg -n \"QK_GAIN_INIT|TTT_ENABLED|TTT_LR|TTT_EPOCHS|VOCAB_SIZE|MATCHED_FINEWEB\" train_gpt.py records/track_10min_16mb/2026-04-09_SP8192_3LayerRecur_ParResid_QK525_LegalTTT/README.md records/track_10min_16mb/2026-04-09_SP8192_3LayerRecur_ParResid_QK525_LegalTTT/submission.json",
+  "slurm": {
+    "run_id": "root-sp8192-pr1493-accepted-8xh100",
+    "script": "train_gpt.py",
+    "setup_command": "pip install brotli sentencepiece && pip install flash_attn_3 --no-deps --find-links https://windreamer.github.io/flash-attention3-wheels/cu128_torch291/"
+  },
+  "success_criteria": "Reproduce the accepted #1493 baseline: final exact val_bpb near 1.0810, train/eval under 600s, total artifact bytes under 16,000,000, and no eval-time network or unscored-token adaptation.",
+  "timing_expectation": "Accepted H100 lane only. Do not auto-launch; run manually on 8xH100 SXM after readiness passes."
+}

@@ -1,5 +1,5 @@
 {
-  "classification": "YELLOW",
+  "classification": "RED",
   "env": {
     "ADAM_WD": "0.04",
     "ARCH_MODE": "K",
@@ -43,18 +43,18 @@
   "h100_only": true,
   "hardware": "1xH100-SXM",
   "lane": "h100_root_sp8192_pr1791_fla_proxy",
-  "notes": "Directional 1xH100 proxy for the active #1791-class FLA lane. Use it to validate environment, artifact path, and roundtrip stability before scheduling the 8xH100 run.",
+  "notes": "Investigation-only 1xH100 proxy for the demoted #1791-class FLA lane. Do not use it as a promotion gate until canonical byte-counted logs exist.",
   "nproc_per_node": 1,
   "profile": "h100-root-sp8192-pr1791-fla-proxy-1xh100",
   "promote": false,
-  "purpose": "Run a cheap single-H100 proxy for the active #1791-class SP8192 FLA lane without claiming final 8xH100 timing or leaderboard validity.",
+  "purpose": "Run a cheap single-H100 canonical scorer/debug probe for the demoted #1791-class SP8192 FLA lane without claiming leaderboard validity.",
   "prerequisite": "Download the SP8192 custom cache with `MATCHED_FINEWEB_REPO_ID=kevclark/parameter-golf MATCHED_FINEWEB_REMOTE_ROOT_PREFIX=datasets python data/cached_challenge_fineweb.py --variant sp8192`, then verify readiness with `python scripts/check_run_ready.py configs/h100/root_sp8192_pr1791_fla_proxy_1xh100.json`.",
   "runtime_budget_minutes": 10,
   "sanity_check_command": "rg -n \"ARCH_MODE|VOCAB_SIZE|EVAL_COMPILE_ENABLED|K_KVShare_Wider|GatedDeltaNet|token_byte_counts\" train_gpt.py frontier_gdn/train_gdn_7k.py frontier_gdn/configs.py frontier_gdn/byte_scoring.py",
   "slurm": {
     "run_id": "root-sp8192-pr1791-fla-proxy-1xh100",
-    "script": "train_gpt.py",
+    "script": "frontier_gdn/train_gdn_7k.py",
     "setup_command": "pip install -r requirements-h100-fla.txt"
   },
-  "success_criteria": "Directional only: finish train/export/eval on one H100, keep the artifact byte-safe, and confirm the final exact roundtrip metric path is stable before any 8xH100 run."
+  "success_criteria": "Investigation only: finish train/export/eval on one H100 with canonical byte accounting and total artifact bytes under 16,000,000 before any future re-promotion discussion."
 }

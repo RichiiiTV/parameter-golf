@@ -381,6 +381,20 @@ def eval_val_sliding(
 CONTROL_PATTERNS = (
     "resid_mix", "q_gain", "smear", "skip_weight", "attn_scale", "mlp_scale",
 )
+ARTIFACT_BYTE_LIMIT = 16_000_000
+COUNTED_CODE_GLOBS = ("train_gpt.py", "frontier_gdn/*.py")
+
+
+def count_counted_code_bytes() -> int:
+    root = Path(__file__).resolve().parents[1]
+    total = 0
+    seen: set[Path] = set()
+    for pattern in COUNTED_CODE_GLOBS:
+        for path in root.glob(pattern):
+            if path.is_file() and path not in seen:
+                total += len(path.read_bytes())
+                seen.add(path)
+    return total
 
 
 def generate_autoregressive_calib(model, device, num_seqs=64, seq_len=2048,
@@ -1093,15 +1107,24 @@ def main():
     torch.save({"w": quant_result, "m": quant_meta}, quant_buf)
     quant_raw = quant_buf.getvalue()
     quant_blob = zstandard.ZstdCompressor(level=22).compress(quant_raw)
+    model_bytes = len(quant_blob)
+    code_bytes = count_counted_code_bytes()
+    total_artifact_bytes = model_bytes + code_bytes
 
     artifact_path = os.path.join(args.ckpt_dir, f"final_model_{config['arch_name']}_seed{args.seed}.int6.ptz")
     if master_process:
         with open(artifact_path, "wb") as f:
             f.write(quant_blob)
-        artifact_bytes = len(quant_blob)
-        log0(f"Artifact: {artifact_bytes:,} bytes ({artifact_bytes / 1024 / 1024:.2f} MB)")
-        if artifact_bytes > 16 * 1024 * 1024:
-            log0(f"WARNING: Artifact exceeds 16MB budget by {(artifact_bytes - 16*1024*1024) / 1024:.1f} KB")
+        log0(f"Compressed model bytes: {model_bytes:,}")
+        log0(f"Counted code bytes:     {code_bytes:,}")
+        log0(f"Total artifact bytes:   {total_artifact_bytes:,} / {ARTIFACT_BYTE_LIMIT:,}")
+    if total_artifact_bytes > ARTIFACT_BYTE_LIMIT:
+        if master_process:
+            over = total_artifact_bytes - ARTIFACT_BYTE_LIMIT
+            log0(f"ERROR: total artifact exceeds decimal 16MB cap by {over:,} bytes; run is not promotable.")
+        if distributed:
+            dist.destroy_process_group()
+        raise SystemExit(1)
 
     # ─── Roundtrip Validation ────────────────────────────────────────────
     log0("\n=== Roundtrip Validation (quantized model) ===")
@@ -1158,7 +1181,9 @@ def main():
     if any(bt in ("swa", "swa_shared") for bt in block_types):
         log0(f"  Quantized BPB+XSA:  {val_bpb_qx:.6f}")
     if master_process:
-        log0(f"  Artifact size:      {artifact_bytes:,} bytes")
+        log0(f"  Model bytes:        {model_bytes:,}")
+        log0(f"  Code bytes:         {code_bytes:,}")
+        log0(f"  Total artifact:     {total_artifact_bytes:,} bytes")
     log0(f"{'='*80}")
     log0(f"final_int6_roundtrip_exact val_loss:{val_loss_q:.8f} val_bpb:{val_bpb_q:.8f}")
 

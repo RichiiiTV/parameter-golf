@@ -41,5 +41,5 @@
     "XSA_EVAL": "0"
   },
   "h100_only": false,
-  "notes": "Local sanity lane for the #1791-class SP8192 FLA runner. Intended only to smoke-test train/export/roundtrip wiring with reduced lengths and compile disabled."
+  "notes": "Local sanity lane for the demoted #1791-class SP8192 FLA runner. Intended only to smoke-test train/export/roundtrip wiring with reduced lengths and compile disabled; not a promotion path."
 }

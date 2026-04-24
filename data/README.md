@@ -1,6 +1,6 @@
 # Data Workflows
 
-The active frontier lane in this repo is SP8192 and expects a custom matched FineWeb export.
+The active legal baseline in this repo is SP8192 and expects a custom matched FineWeb export.
 
 Canonical active layout:
 - `data/datasets/fineweb10B_sp8192/`
@@ -14,7 +14,7 @@ Default custom export route used by the active configs:
 
 The public Hugging Face dataset repo still only publishes SP1024. Use that only for the non-frontier MLX helper or historical debugging.
 
-## Downloading The Active Frontier Cache
+## Downloading The Active SP8192 Cache
 
 Download the active SP8192 cache with:
 
@@ -30,7 +30,7 @@ By default it downloads the full validation split and 8B training tokens (80 tra
 Before launching `torchrun`, verify that the active config points at the downloaded tokenizer family and custom repo:
 
 ```bash
-python3 scripts/check_run_ready.py configs/h100/root_sp8192_pr1791_fla_proxy_1xh100.json
+python3 scripts/check_run_ready.py configs/h100/root_sp8192_pr1493_accepted_8xh100.json
 ```
 
 For a smaller bootstrap subset while iterating:
@@ -51,4 +51,4 @@ If you explicitly want the archived public cache for `train_gpt_mlx.py` or histo
 python3 data/cached_challenge_fineweb.py --variant sp1024
 ```
 
-That uses the public default repo `willdepueoai/parameter-golf`. Do not treat it as the active frontier surface for `train_gpt.py`.
+That uses the public default repo `willdepueoai/parameter-golf`. Do not treat it as the active SP8192 surface for `train_gpt.py`.

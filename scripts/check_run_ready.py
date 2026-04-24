@@ -69,7 +69,7 @@ def main() -> None:
                 "instead of the public HF dataset repo."
             )
         if not remote_root_prefix:
-            failures.append("MATCHED_FINEWEB_REMOTE_ROOT_PREFIX must not be empty for the SP8192 frontier lane")
+            failures.append("MATCHED_FINEWEB_REMOTE_ROOT_PREFIX must not be empty for the SP8192 lane")
 
     print(f"config: {config_path}")
     print(f"data_path: {data_path}")
@@ -86,7 +86,7 @@ def main() -> None:
             print(f"- {failure}")
         if vocab_size >= 8192:
             print(
-                "hint: bootstrap the frontier cache with "
+                "hint: bootstrap the SP8192 cache with "
                 f"`MATCHED_FINEWEB_REPO_ID={repo_id} MATCHED_FINEWEB_REMOTE_ROOT_PREFIX={remote_root_prefix} "
                 "python data/cached_challenge_fineweb.py --variant sp8192`"
             )

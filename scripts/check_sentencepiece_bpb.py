@@ -33,7 +33,7 @@ def main() -> None:
     except ImportError as exc:
         raise RuntimeError(
             "check_sentencepiece_bpb.py requires both sentencepiece and torch. "
-            "Install the active runtime with `pip install -r requirements-h100-fla.txt` or run it inside the prepared H100 environment."
+            "Install sentencepiece and torch, or run it inside the prepared H100 environment."
         ) from exc
 
     from frontier_gdn.byte_scoring import build_sentencepiece_luts, token_byte_counts

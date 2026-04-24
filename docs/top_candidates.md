@@ -1,21 +1,21 @@
 # Top Candidates
 
-## Active Frontier Lane
+## Active Legal Baseline
 - Active root runner: `train_gpt.py`
-- Active frontier package: `frontier_gdn/`
-- Runnable H100 target: `configs/h100/root_sp8192_pr1791_fla_8xh100.json`
-- Directional proxy: `configs/h100/root_sp8192_pr1791_fla_proxy_1xh100.json`
-- Local sanity: `configs/local/root_sp8192_pr1791_fla_sanity.json`
+- Active accepted source: `records/track_10min_16mb/2026-04-09_SP8192_3LayerRecur_ParResid_QK525_LegalTTT/train_gpt.py`
+- Root status: local runnable copy with syntax and decimal artifact-cap enforcement repairs
+- Runnable H100 target: `configs/h100/root_sp8192_pr1493_accepted_8xh100.json`
 - Required dataset/tokenizer surface: custom SP8192 export via `MATCHED_FINEWEB_REPO_ID=kevclark/parameter-golf`
+- Accepted upstream reference: PR `#1493`, `val_bpb=1.0810`, 3-seed mean, legal score-first TTT, artifacts under `16,000,000` bytes.
 - Preserved local reference baseline: `logs/root-pr549-softqat.txt` at `1.11956668`
-- Preserved historical snapshots: `snapshots/train_gpt_2026-04-22_pre_shd_pivot_root.py`, `snapshots/train_gpt_2026-04-22_pre_shd_only_prune_root.py`, `snapshots/train_gpt_2026-04-22_pre_sp8192_pr1667_pivot_root.py`, `snapshots/train_gpt_2026-04-23_pre_public_sp1024_reset_root.py`, and `snapshots/train_gpt_2026-04-23_pre_pr1791_fla_pivot_root.py`
+- Preserved previous root FLA script: `snapshots/train_gpt_2026-04-24_pre_pr1493_accepted_reset_root.py`
 
 ## Upstream Check
-- Checked on April 23, 2026: `#1791` leads the open SP8192 pack at `1.0339`.
-- Relevant alternatives: `#1787` at `1.06378`, `#1790` at `1.06991`, `#1771` at `1.06513` with legality pending, and `#1767` at `1.07209`.
-- Decision: target `#1791` first because it is the strongest visible open lane and avoids the active TTT / CaseOps legality path.
+- Checked on April 24, 2026: PR `#1791` is no longer a promotable target despite its reported `1.0339`.
+- Reason: upstream review comments show the submitted `(val_loss, val_bpb)` pairs imply the older non-canonical byte denominator (`~4.3864` bytes/token), not the canonical SP8192 denominator (`~3.7266` bytes/token). Canonical rescoring was estimated around `1.2169`.
+- Current clean accepted target is `#1493` at `1.0810`. The PR `#1735` open lane reports `1.0429` with a canonical LUT, but remains reproduction-pending and uses pre-quant TTT; do not treat it as accepted SOTA until merged or locally proven.
 
 ## Current Use
-- Use the proxy first to validate the FLA runtime, SP8192 cache, artifact size, and roundtrip stability.
-- Promote the 8xH100 lane only after the proxy is stable.
-- If the FLA proxy cannot be made evaluation-stable on the pinned runtime, re-plan around `#1787`; do not half-port `#1791`.
+- Use `configs/h100/root_sp8192_pr1493_accepted_8xh100.json` for the active legal SOTA baseline.
+- Keep `configs/h100/root_sp8192_pr1791_fla_8xh100.json` and `configs/h100/root_sp8192_pr1791_fla_proxy_1xh100.json` as investigation-only.
+- Do not schedule the demoted FLA lane as GREEN unless a fresh canonical H100 run produces consistent byte-counted logs and artifact accounting under the decimal cap.

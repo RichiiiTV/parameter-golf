@@ -1,5 +1,5 @@
 {
-  "classification": "GREEN",
+  "classification": "RED",
   "env": {
     "ADAM_WD": "0.04",
     "ARCH_MODE": "K",
@@ -43,18 +43,18 @@
   "h100_only": true,
   "hardware": "8xH100-SXM",
   "lane": "h100_root_sp8192_pr1791_fla",
-  "notes": "Active frontier lane targeting upstream PR #1791 K_KVShare_Wider GatedDeltaNet / FLA on SP8192 via a custom HF export. No TTT, no SLOT, no XSA, no n-gram overlay.",
+  "notes": "Investigation-only lane for upstream PR #1791 K_KVShare_Wider GatedDeltaNet / FLA. Do not promote: April 24, 2026 upstream review indicates the reported 1.0339 likely came from an older non-canonical byte-count path, with canonical rescoring around 1.2169.",
   "profile": "h100-root-sp8192-pr1791-fla-8xh100",
-  "promote": true,
-  "purpose": "Run the active #1791-class SP8192 FLA frontier lane end to end on 8xH100 with the custom matched FineWeb export and donor-style int6+zstd-22 artifact path.",
+  "promote": false,
+  "purpose": "Investigation-only canonical rescoring or debugging for the #1791-class SP8192 FLA lane. Use configs/h100/root_sp8192_pr1493_accepted_8xh100.json for the active legal SOTA baseline.",
   "prerequisite": "Download the SP8192 custom cache with `MATCHED_FINEWEB_REPO_ID=kevclark/parameter-golf MATCHED_FINEWEB_REMOTE_ROOT_PREFIX=datasets python data/cached_challenge_fineweb.py --variant sp8192`, then verify readiness with `python scripts/check_run_ready.py configs/h100/root_sp8192_pr1791_fla_8xh100.json`.",
   "runtime_budget_minutes": 10,
   "sanity_check_command": "rg -n \"ARCH_MODE|VOCAB_SIZE|EVAL_COMPILE_ENABLED|K_KVShare_Wider|GatedDeltaNet|token_byte_counts\" train_gpt.py frontier_gdn/train_gdn_7k.py frontier_gdn/configs.py frontier_gdn/byte_scoring.py",
   "slurm": {
     "run_id": "root-sp8192-pr1791-fla-8xh100",
-    "script": "train_gpt.py",
+    "script": "frontier_gdn/train_gdn_7k.py",
     "setup_command": "pip install -r requirements-h100-fla.txt"
   },
-  "success_criteria": "Finish donor-style train/export/roundtrip cleanly, keep the artifact under 16,000,000 bytes, and log the final exact roundtrip metric without any eval-time network access.",
-  "timing_expectation": "Frontier H100 lane only. Validate the 1xH100 proxy first if the FLA stack has not yet been smoke-tested on the current image."
+  "success_criteria": "Investigation only: produce canonical byte-counted logs and artifact accounting under 16,000,000 total bytes before reconsidering promotion.",
+  "timing_expectation": "Do not schedule as the active run. The accepted #1493 baseline is the active GREEN lane."
 }

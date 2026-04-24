@@ -216,7 +216,7 @@ def main() -> None:
             f"{args.variant} is not published in the public HF repo {REPO_ID}. "
             "Use `--variant sp1024` for the public cache, or set "
             f"`MATCHED_FINEWEB_REPO_ID={ACTIVE_FRONTIER_REPO_ID}` and "
-            "`MATCHED_FINEWEB_REMOTE_ROOT_PREFIX=datasets` for the active SP8192 frontier export."
+            "`MATCHED_FINEWEB_REMOTE_ROOT_PREFIX=datasets` for the active SP8192 export."
         )
 
     manifest = load_manifest(skip_manifest_download=args.skip_manifest)
@@ -228,7 +228,7 @@ def main() -> None:
             f"Published dataset variants there are: {published or 'none'}. "
             "Use `--variant sp1024` for the public cache, or set "
             f"`MATCHED_FINEWEB_REPO_ID={ACTIVE_FRONTIER_REPO_ID}` and "
-            "`MATCHED_FINEWEB_REMOTE_ROOT_PREFIX=datasets` for the active SP8192 frontier export."
+            "`MATCHED_FINEWEB_REMOTE_ROOT_PREFIX=datasets` for the active SP8192 export."
         )
     dataset_entry = resolve_dataset_entry(manifest, dataset_dir)
     if dataset_entry is None:
